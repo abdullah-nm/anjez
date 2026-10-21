@@ -7,7 +7,7 @@ export class OpenAICompatibleEmbeddings implements EmbeddingProvider {
   constructor(
     private readonly options: {
       apiKey: string | null
-      baseUrl: string
+      baseUrl: string | null
       model: string
       dimensions: number
     },
@@ -21,7 +21,7 @@ export class OpenAICompatibleEmbeddings implements EmbeddingProvider {
     if (!this.options.apiKey) {
       throw new MissingProviderError(
         'EMBEDDINGS_UNAVAILABLE',
-        'مزود التضمين غير مضبوط. ضع EMBEDDING_API_KEY أو OPENAI_API_KEY ثم أعد الفهرسة.',
+        'مزود التضمين غير مضبوط. ضع GEMINI_API_KEY أو EMBEDDING_API_KEY ثم أعد الفهرسة.',
       )
     }
     if (texts.length === 0) return []
@@ -30,7 +30,7 @@ export class OpenAICompatibleEmbeddings implements EmbeddingProvider {
     const size = 32
     for (let i = 0; i < texts.length; i += size) {
       const input = texts.slice(i, i + size)
-      const response = await fetch(`${this.options.baseUrl}/embeddings`, {
+      const response = await fetch(`${this.options.baseUrl || 'https://api.openai.com/v1'}/embeddings`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${this.options.apiKey}`,
@@ -65,7 +65,7 @@ export class OpenAICompatibleLlm {
   constructor(
     private readonly options: {
       apiKey: string | null
-      baseUrl: string
+      baseUrl: string | null
       model: string
     },
   ) {}
@@ -74,10 +74,10 @@ export class OpenAICompatibleLlm {
     if (!this.options.apiKey) {
       throw new MissingProviderError(
         'LLM_UNAVAILABLE',
-        'مزود اللغة غير مضبوط. ضع LLM_API_KEY أو OPENAI_API_KEY.',
+        'مزود اللغة غير مضبوط. ضع GEMINI_API_KEY أو LLM_API_KEY.',
       )
     }
-    const response = await fetch(`${this.options.baseUrl}/chat/completions`, {
+    const response = await fetch(`${this.options.baseUrl || 'https://api.openai.com/v1'}/chat/completions`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${this.options.apiKey}`,

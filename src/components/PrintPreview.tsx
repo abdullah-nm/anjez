@@ -9,6 +9,8 @@ export function PrintPreview({
   product: PrintProduct
   draft: DesignDraft
 }) {
+  const logoSrc = brand.logoUrl || undefined
+
   return (
     <div
       className={`preview preview-${product.kind}`}
@@ -23,6 +25,16 @@ export function PrintPreview({
           <img className="preview-artwork" src={draft.generatedImageDataUrl} alt="" />
           <div className="preview-shade" aria-hidden="true" />
         </>
+      )}
+      {logoSrc && (
+        <img
+          className="preview-logo"
+          src={logoSrc}
+          alt={`شعار ${brand.companyName}`}
+          onError={(event) => {
+            event.currentTarget.style.display = 'none'
+          }}
+        />
       )}
       <p className="preview-kicker" style={{ color: brand.accentColor }}>
         {brand.companyName}

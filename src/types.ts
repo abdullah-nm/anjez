@@ -23,6 +23,7 @@ export interface CompanyBrand {
   accentColor: string
   slogan: string
   tone: Tone
+  logoUrl?: string | null
 }
 
 export interface CompanyEvent {

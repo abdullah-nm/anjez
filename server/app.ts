@@ -9,12 +9,15 @@ import { readOriginal, removeOriginal, saveOriginal } from './lib/files.ts'
 import type { AppConfig } from './config.ts'
 import { providerStatus } from './config.ts'
 import { AppError, MissingProviderError } from './lib/errors.ts'
-import { OpenAICompatibleImageGenerator } from './lib/imageGeneration.ts'
+import { GeminiImageClient } from './platform/gemini.ts'
 import type { ImageGenerator, ImageSize } from './lib/imageGeneration.ts'
 import { SUPPORTED_EXTENSIONS, isSupportedFilename } from './lib/extract.ts'
 import { answerFromChunks, ingestBuffer, retrieveForCompany } from './rag.ts'
 import type { KnowledgeStore } from './store.ts'
 import type { EmbeddingProvider, LlmProvider, SessionUser } from './types.ts'
+import { registerPlatformRoutes } from './platform/routes.ts'
+import { LocalObjectStorage } from './platform/storage.ts'
+import type { PlatformStore } from './platform/store.ts'
 
 const loginSchema = z.object({
   email: z.string().email(),
@@ -41,6 +44,8 @@ type Deps = {
   embeddings: EmbeddingProvider
   llm: LlmProvider
   images?: ImageGenerator
+  platform: PlatformStore
+  storage: LocalObjectStorage
 }
 
 export function createApp(deps: Deps) {
@@ -49,12 +54,25 @@ export function createApp(deps: Deps) {
     storage: multer.memoryStorage(),
     limits: { fileSize: deps.config.maxUploadBytes },
   })
-  const images = deps.images ?? new OpenAICompatibleImageGenerator(deps.config.image)
+  const images =
+    deps.images ??
+    { generate: ({ prompt }: { prompt: string; size: ImageSize }) =>
+      new GeminiImageClient(deps.config.geminiApiKey, deps.config.geminiImageModel)
+        .generatePngDataUrl(prompt) }
   const imageRequests = new Map<string, number[]>()
 
   app.use(cors({ origin: true, credentials: true }))
   app.use(express.json({ limit: '1mb' }))
   app.use(cookieParser())
+
+  registerPlatformRoutes(app, {
+    config: deps.config,
+    platform: deps.platform,
+    storage: deps.storage,
+    llm: deps.llm,
+    images,
+    requireUser,
+  })
 
   app.get('/api/health', (_req, res) => {
     res.json({

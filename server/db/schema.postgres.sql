@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS chunks (
   company_id TEXT NOT NULL REFERENCES companies(id),
   chunk_index INTEGER NOT NULL,
   content TEXT NOT NULL,
-  embedding vector(1536) NOT NULL,
+  embedding vector(1536) NOT NULL, -- keep 1536 unless you ALTER after wiping chunks; do not mix with 768-d Gemini vectors
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (document_id, chunk_index)
 );

@@ -351,6 +351,7 @@ h3 {
   align-content: center;
   gap: 0.4rem;
   position: relative;
+  padding: 2.8rem 1.1rem 1.1rem;
 }
 
 .preview-artwork {
@@ -362,6 +363,21 @@ h3 {
   z-index: 0;
 }
 
+.preview-logo {
+  position: absolute;
+  top: 1rem;
+  inset-inline-start: 1rem;
+  max-width: 28%;
+  max-height: 22%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  z-index: 4;
+  background: rgba(255, 255, 255, 0.92);
+  padding: 0.35rem;
+  border-radius: 0.55rem;
+}
+
 .preview-shade {
   position: absolute;
   inset: 0;
@@ -369,7 +385,7 @@ h3 {
   z-index: 1;
 }
 
-.preview > :not(.preview-artwork):not(.preview-shade) {
+.preview > :not(.preview-artwork):not(.preview-shade):not(.preview-logo) {
   position: relative;
   z-index: 2;
   text-shadow: 0 1px 5px rgba(0, 0, 0, 0.55);
@@ -470,6 +486,57 @@ fieldset {
   padding: 0;
   margin: 0;
 }
+
+.logo-drop {
+  border: 1px dashed var(--gold);
+  border-radius: 1rem;
+  padding: 1rem;
+  background: #fbf6ec;
+  display: grid;
+  gap: 0.6rem;
+}
+.logo-drop.dragging { background: #fff; }
+.logo-preview-wrap {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+.logo-preview {
+  max-height: 140px;
+  max-width: 240px;
+  object-fit: contain;
+  background: #fff;
+  padding: 0.5rem;
+  border-radius: 0.7rem;
+  border: 1px solid var(--line);
+}
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 0.35rem;
+}
+.cal-cell {
+  min-height: 72px;
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  padding: 0.35rem;
+  background: var(--sheet);
+  display: grid;
+  align-content: start;
+  gap: 0.2rem;
+}
+.cal-event {
+  font: inherit;
+  font-size: 0.75rem;
+  border: 0;
+  background: var(--ink);
+  color: #fff;
+  border-radius: 0.35rem;
+  cursor: pointer;
+}
+.svg-thumb svg { width: 100%; height: auto; border-radius: 0.6rem; }
+.svg-thumb { overflow: hidden; }
 
 @media (max-width: 860px) {
   .topbar {

@@ -48,7 +48,8 @@ export function blobToFloats(value: Buffer | Uint8Array | ArrayBuffer) {
 }
 
 export function cosineSimilarity(a: number[], b: number[]) {
-  const n = Math.min(a.length, b.length)
+  if (a.length !== b.length) return 0
+  const n = a.length
   let dot = 0
   let na = 0
   let nb = 0

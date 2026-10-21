@@ -6,6 +6,8 @@ import request from 'supertest'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createApp } from '../app.ts'
 import { loadConfig } from '../config.ts'
+import { LocalObjectStorage } from '../platform/storage.ts'
+import { PlatformStore } from '../platform/store.ts'
 import { saveOriginal } from '../lib/files.ts'
 import { ingestBuffer } from '../rag.ts'
 import { seedAccounts } from '../seed.ts'
@@ -25,6 +27,19 @@ function testEnv(dir: string) {
     RAG_MIN_SIMILARITY: '0.05',
     DOCUMENT_RETENTION_DAYS: '365',
     VECTOR_BACKEND: 'sqlite',
+    PLATFORM_SQLITE_PATH: join(dir, 'platform.sqlite'),
+  })
+}
+
+function withPlatform(
+  config: ReturnType<typeof loadConfig>,
+  extra: Omit<Parameters<typeof createApp>[0], 'platform' | 'storage'>,
+) {
+  return createApp({
+    ...extra,
+    config,
+    platform: new PlatformStore(config.platformSqlitePath),
+    storage: new LocalObjectStorage(config.uploadRoot),
   })
 }
 
@@ -69,7 +84,7 @@ async function boot(images?: ImageGenerator) {
     'qimam-print-policy.md',
     readFileSync(join(fixtures, 'qimam-print-policy.md')),
   )
-  const app = createApp({ config, store, embeddings, llm, images })
+  const app = withPlatform(config, { config, store, embeddings, llm, images })
   return { app, store, nebrasDoc, qimamDoc }
 }
 
@@ -216,7 +231,7 @@ describe('company-isolated RAG', () => {
     cleanups.push(() => store.close())
     await seedAccounts(store)
     const { OpenAICompatibleEmbeddings, OpenAICompatibleLlm } = await import('../lib/embeddings.ts')
-    const app = createApp({
+    const app = withPlatform(config, {
       config,
       store,
       embeddings: new OpenAICompatibleEmbeddings(config.embedding),
@@ -293,7 +308,7 @@ describe('company-isolated RAG', () => {
     const store = new SqliteStore(config.sqlitePath)
     cleanups.push(() => store.close())
     await seedAccounts(store)
-    const app = createApp({
+    const app = withPlatform(config, {
       config,
       store,
       embeddings: new HashingEmbeddingProvider(),
@@ -350,7 +365,7 @@ async function bootWithLlmGap() {
     buffer: readFileSync(join(fixtures, 'nebras-print-policy.md')),
     config,
   })
-  const app = createApp({
+  const app = withPlatform(config, {
     config,
     store,
     embeddings,

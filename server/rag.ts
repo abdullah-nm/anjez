@@ -65,7 +65,22 @@ export async function ingestBuffer(input: {
   }
 
   try {
+    const storedDim = await input.store.storedEmbeddingDimension()
+    if (storedDim && storedDim !== input.embeddings.dimensions) {
+      throw new AppError(
+        `المخزن يحتوي متجهات بأبعاد ${storedDim} بينما الإعداد الحالي ${input.embeddings.dimensions}. أعد فهرسة كل المستندات بعد حذف المتجهات القديمة، ولا تخلط نماذج التضمين. عمود Postgres يبقى vector(1536) ما لم تُنفَّذ هجرة يدوية.`,
+        409,
+        'EMBEDDING_DIMENSION_MISMATCH',
+      )
+    }
     const vectors = await input.embeddings.embed(chunks)
+    if (vectors.some((vector) => vector.length !== input.embeddings.dimensions)) {
+      throw new AppError(
+        'أبعاد المتجهات المُعادة لا تطابق EMBEDDING_DIMENSIONS.',
+        502,
+        'EMBEDDING_DIMENSION_MISMATCH',
+      )
+    }
     await input.store.replaceChunks(
       companyId,
       documentId,
@@ -111,6 +126,14 @@ export async function retrieveForCompany(input: {
 }) {
   if (!input.companyId) {
     throw new AppError('تعذر تحديد الشركة من الجلسة', 401, 'NO_COMPANY_SESSION')
+  }
+  const storedDim = await input.store.storedEmbeddingDimension()
+  if (storedDim && storedDim !== input.embeddings.dimensions) {
+    throw new AppError(
+      `أبعاد الاستعلام (${input.embeddings.dimensions}) لا تطابق المتجهات المخزّنة (${storedDim}). أعد الفهرسة بنموذج واحد.`,
+      409,
+      'EMBEDDING_DIMENSION_MISMATCH',
+    )
   }
   const [queryVector] = await input.embeddings.embed([input.question])
   const rows = await input.store.searchChunks(input.companyId, queryVector, input.limit ?? 6)

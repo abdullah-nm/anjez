@@ -5,7 +5,11 @@ export default defineConfig({
   plugins: [react()],
   server: {
     proxy: {
-      '/api': 'http://127.0.0.1:8787',
+      '/api': {
+        target: 'http://127.0.0.1:8787',
+        changeOrigin: true,
+        timeout: 120_000,
+      },
     },
   },
 })

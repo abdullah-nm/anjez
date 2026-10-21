@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "concurrently -k \"npm:dev:server\" \"npm:dev:web\"",
-    "dev:web": "vite",
+    "dev:web": "node scripts/wait-api.mjs && vite",
     "dev:server": "tsx server/index.ts",
     "build": "tsc -b && vite build",
     "lint": "oxlint",

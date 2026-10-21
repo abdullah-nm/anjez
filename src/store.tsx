@@ -1,10 +1,12 @@
 import {
   createContext,
   useContext,
+  useEffect,
   useMemo,
   useState,
   type ReactNode,
 } from 'react'
+import { fetchBrandLogoObjectUrl } from './brandLogo'
 import { defaultBrand, events, products } from './data'
 import type { CompanyBrand, DesignDraft, PrintOrder } from './types'
 
@@ -51,6 +53,38 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [orders, setOrders] = useState<PrintOrder[]>(() =>
     readJson(ORDERS_KEY, []),
   )
+
+  useEffect(() => {
+    void (async () => {
+      const response = await fetch('/api/brand', { credentials: 'include' })
+      if (!response.ok) return
+      const payload = await response.json()
+      if (!payload?.brand) return
+      const logoUrl = payload.brand.logoPath ? await fetchBrandLogoObjectUrl() : null
+      const next: CompanyBrand = {
+        companyName: payload.brand.companyName,
+        industry: payload.brand.industry,
+        contactName: payload.brand.contactName,
+        email: payload.brand.email,
+        phone: payload.brand.phone,
+        city: payload.brand.city,
+        primaryColor: payload.brand.primaryColor,
+        accentColor: payload.brand.accentColor,
+        slogan: payload.brand.slogan,
+        tone: payload.brand.tone || 'فاخر',
+        logoUrl,
+      }
+      setBrand(next)
+      try {
+        localStorage.setItem(
+          BRAND_KEY,
+          JSON.stringify({ ...next, logoUrl: payload.brand.logoPath ? '/api/brand/logo' : null }),
+        )
+      } catch {
+        /* ignore quota */
+      }
+    })().catch(() => undefined)
+  }, [])
 
   const value = useMemo<AppStore>(
     () => ({

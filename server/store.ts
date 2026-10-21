@@ -45,6 +45,7 @@ export interface KnowledgeStore {
   softDeleteDocument(companyId: string, documentId: string, at: string): Promise<boolean>
   replaceChunks(companyId: string, documentId: string, chunks: Omit<KnowledgeChunk, 'filename'>[]): Promise<void>
   searchChunks(companyId: string, queryEmbedding: number[], limit: number): Promise<RetrievedChunk[]>
+  storedEmbeddingDimension(): Promise<number | null>
   audit(event: AuditEvent): Promise<void>
   purgeExpired(nowIso: string): Promise<number>
   close(): Promise<void>
@@ -361,18 +362,31 @@ export class SqliteStore implements KnowledgeStore {
     }[]
 
     return rows
-      .map((row) => ({
-        id: row.id,
-        documentId: row.document_id,
-        companyId: row.company_id,
-        chunkIndex: row.chunk_index,
-        content: row.content,
-        filename: row.filename,
-        similarity: cosineSimilarity(queryEmbedding, blobToFloats(row.embedding)),
-      }))
-      .filter((row) => row.companyId === companyId)
+      .flatMap((row) => {
+        const stored = blobToFloats(row.embedding)
+        if (stored.length !== queryEmbedding.length || row.company_id !== companyId) return []
+        return [
+          {
+            id: row.id,
+            documentId: row.document_id,
+            companyId: row.company_id,
+            chunkIndex: row.chunk_index,
+            content: row.content,
+            filename: row.filename,
+            similarity: cosineSimilarity(queryEmbedding, stored),
+          },
+        ]
+      })
       .sort((a, b) => b.similarity - a.similarity)
       .slice(0, limit)
+  }
+
+  async storedEmbeddingDimension() {
+    const row = this.db.prepare('SELECT embedding FROM chunks LIMIT 1').get() as
+      | { embedding: Uint8Array }
+      | undefined
+    if (!row) return null
+    return blobToFloats(row.embedding).length
   }
 
   async audit(event: AuditEvent) {
@@ -640,6 +654,14 @@ class PostgresStore implements KnowledgeStore {
         event.extra ? JSON.stringify(event.extra) : null,
       ],
     )
+  }
+
+  async storedEmbeddingDimension() {
+    const { rows } = await this.pool.query(
+      `SELECT vector_dims(embedding)::int AS d FROM chunks LIMIT 1`,
+    )
+    const value = rows[0]?.d
+    return typeof value === 'number' ? value : null
   }
 
   async purgeExpired(nowIso: string) {

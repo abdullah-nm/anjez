@@ -134,6 +134,42 @@ export const products: PrintProduct[] = [
     fromPrice: 9.2,
     leadDays: 6,
   },
+  {
+    id: 'prd-mug',
+    name: 'أكواب',
+    kind: 'card',
+    summary: 'كوب سيراميك بهوية الشركة للمناسبات الداخلية.',
+    sizes: ['11oz'],
+    fromPrice: 18,
+    leadDays: 7,
+  },
+  {
+    id: 'prd-notebook',
+    name: 'دفاتر',
+    kind: 'brochure',
+    summary: 'دفتر ملاحظات بغلاف مطبوع للملتقى والمؤتمر.',
+    sizes: ['A5'],
+    fromPrice: 14,
+    leadDays: 8,
+  },
+  {
+    id: 'prd-greeting',
+    name: 'بطاقات تهنئة',
+    kind: 'invite',
+    summary: 'بطاقة تهنئة للمناسبات الوطنية والتهاني.',
+    sizes: ['A6'],
+    fromPrice: 3.5,
+    leadDays: 4,
+  },
+  {
+    id: 'prd-poster',
+    name: 'ملصقات',
+    kind: 'banner',
+    summary: 'ملصق جداري للممر والاستقبال.',
+    sizes: ['A2', 'A1'],
+    fromPrice: 22,
+    leadDays: 3,
+  },
 ]
 
 export const recommendations: Recommendation[] = [

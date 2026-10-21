@@ -22,6 +22,7 @@ export type RagStatus = {
   llmConfigured: boolean
   imageConfigured: boolean
   imageModel: string
+  geminiConfigured?: boolean
   embeddingModel: string
   llmModel: string
   vectorBackend: string
