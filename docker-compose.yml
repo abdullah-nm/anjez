@@ -1,0 +1,14 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: anjz
+      POSTGRES_USER: anjz
+      POSTGRES_PASSWORD: anjz
+    ports:
+      - "5432:5432"
+    volumes:
+      - anjz_pg:/var/lib/postgresql/data
+
+volumes:
+  anjz_pg:
