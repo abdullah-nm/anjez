@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { events as demoEvents, formatDate, formatMoney, productById, products, recommendations } from '../data'
+import { events as demoEvents, formatDate, formatMoney, productById, recommendations } from '../data'
 import { useStore } from '../store'
 import { useAuth } from '../auth'
 
@@ -20,7 +20,7 @@ function remaining(ymd: string) {
 }
 
 export function Dashboard() {
-  const { brand, draft, setDraft, orders } = useStore()
+  const { draft, setDraft, orders } = useStore()
   const { user, loading } = useAuth()
   const navigate = useNavigate()
   const [liveEvents, setLiveEvents] = useState<LiveEvent[]>([])
@@ -48,14 +48,16 @@ export function Dashboard() {
     if (!product) return
     const live = liveEvents.find((item) => item.id === eventId)
     const demo = demoEvents.find((item) => item.id === eventId)
+      const title = live?.title || demo?.title || ''
     setDraft({
       ...draft,
       productId,
       eventId,
+      eventTitle: title,
       size: product.sizes[0],
-      headline: brand.companyName,
-      subhead: live?.title || demo?.title || draft.subhead,
-      body: brand.slogan,
+      headline: title,
+      subhead: '',
+      body: '',
     })
     navigate(`/studio?eventId=${eventId}`)
   }
@@ -73,19 +75,13 @@ export function Dashboard() {
 
   return (
     <div className="stack">
-      <section className="hero-panel">
-        <div>
-          <p className="eyebrow">مرحباً {brand.contactName}</p>
-          <h1>الهوية، ثم المناسبات، ثم التصميم المطبوع</h1>
-          <p className="lede">
-            اضبط عدة الهوية، أضف مناسبات الشركة، راقب التذكير، ثم ولّد تصميماً يحمل الشعار والألوان.
-          </p>
-        </div>
-        <div className="hero-actions">
-          <Link className="btn btn-primary" to="/studio">استوديو التصميم</Link>
-          <Link className="btn btn-ghost" to="/brand">عدة الهوية</Link>
-          <Link className="btn btn-ghost" to="/calendar">التقويم</Link>
-        </div>
+      <section className="section-head">
+        <h1>تصميم جديد</h1>
+        {user ? (
+          <Link className="btn btn-primary" to="/studio">ابدأ</Link>
+        ) : (
+          <Link className="btn btn-primary" to="/login" state={{ from: '/studio' }}>دخول</Link>
+        )}
       </section>
 
       {user && unread > 0 && (
@@ -112,7 +108,7 @@ export function Dashboard() {
                 <p>{days >= 0 ? `متبقي ${days} يوم` : 'اليوم أو فات الموعد'}</p>
                 <p className="muted">تذكير قبل {event.reminderDays.join('، ')} يوم · مقترح: {product?.name}</p>
                 <button type="button" className="btn btn-secondary" onClick={() => openStudio(productId, event.id)}>
-                  ولّد تصاميم لهذه المناسبة
+                  صمم لهذه المناسبة
                 </button>
               </article>
             )
@@ -120,9 +116,10 @@ export function Dashboard() {
         </div>
       </section>
 
-      <section>
+      <details className="card catalog-extra">
+        <summary>أمثلة منتجات من الكتالوج</summary>
         <div className="section-head">
-          <h2>توصيات منتجات (بدون أسعار مخترعة للطلب)</h2>
+          <h2>اقتراحات جاهزة، وليست طلبات تنفيذ</h2>
         </div>
         <div className="rec-list">
           {recommendations.map((rec) => {
@@ -137,24 +134,12 @@ export function Dashboard() {
                   <p>{rec.reason}</p>
                   <p className="muted">سعر كتالوج استرشادي {formatMoney(product.fromPrice)} — ليس عرض تنفيذ.</p>
                 </div>
-                <button type="button" className="btn btn-primary" onClick={() => openStudio(product.id, event.id)}>تخصيص</button>
+                <button type="button" className="btn btn-ghost" onClick={() => openStudio(product.id, event.id)}>استخدم هذا المنتج</button>
               </article>
             )
           })}
         </div>
-      </section>
-
-      <section>
-        <div className="product-row">
-          {products.map((product) => (
-            <article key={product.id} className="card compact">
-              <h3>{product.name}</h3>
-              <p>{product.summary}</p>
-              <Link className="text-link" to="/studio" onClick={() => setDraft({ ...draft, productId: product.id, size: product.sizes[0] })}>ابدأ بهذا المنتج</Link>
-            </article>
-          ))}
-        </div>
-      </section>
+      </details>
 
       {orders.length > 0 && (
         <ul className="order-mini">

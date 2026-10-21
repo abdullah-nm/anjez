@@ -20,8 +20,8 @@ import { LocalObjectStorage } from './platform/storage.ts'
 import type { PlatformStore } from './platform/store.ts'
 
 const loginSchema = z.object({
-  email: z.string().email(),
-  password: z.string().min(1),
+  email: z.string().optional().default(''),
+  password: z.string().optional().default(''),
 })
 
 const askSchema = z

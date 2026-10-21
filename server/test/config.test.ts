@@ -18,7 +18,7 @@ describe('Gemini environment wiring', () => {
     expect(config.embedding.baseUrl).toBeNull()
     expect(config.embedding.dimensions).toBe(768)
     expect(config.llm.apiKey).toBe('test-gemini')
-    expect(config.geminiImageModel).toBe('gemini-2.5-flash-image')
+    expect(config.geminiImageModel).toBe('gemini-3.1-flash-image')
     expect(createEmbeddingProvider(config)).toBeInstanceOf(GeminiEmbeddings)
     expect(createLlmProvider(config)).toBeInstanceOf(GeminiLlm)
   })

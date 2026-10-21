@@ -10,6 +10,7 @@ import { Login } from './pages/Login'
 import { NotificationsPage } from './pages/Notifications'
 import { Order } from './pages/Order'
 import { Studio } from './pages/Studio'
+import { Welcome } from './pages/Welcome'
 import { StoreProvider } from './store'
 
 export default function App() {
@@ -19,7 +20,8 @@ export default function App() {
         <BrowserRouter>
           <Routes>
             <Route element={<Layout />}>
-              <Route path="/" element={<Dashboard />} />
+              <Route path="/" element={<Welcome />} />
+              <Route path="/home" element={<Dashboard />} />
               <Route path="/studio" element={<Studio />} />
               <Route path="/brand" element={<Brand />} />
               <Route path="/order" element={<Order />} />

@@ -3,7 +3,11 @@ import { MissingProviderError } from '../lib/errors.ts'
 
 const GEMINI_ROOT = 'https://generativelanguage.googleapis.com/v1beta'
 const TEXT_FALLBACKS = ['gemini-3.8-flash', 'gemini-flash-latest', 'gemini-2.5-flash']
-const IMAGE_FALLBACKS = ['gemini-2.5-flash-image', 'gemini-3.8-flash', 'gemini-flash-latest']
+const IMAGE_FALLBACKS = [
+  'gemini-3.1-flash-image',
+  'gemini-3.1-flash-lite-image',
+  'gemini-2.5-flash-image',
+]
 
 function sanitizeGeminiDetail(detail: string) {
   return detail
@@ -89,6 +93,7 @@ async function generateContentWithFailover(
           break
         }
         if (status === 429 || status === 503) {
+          if (code === 'IMAGE_GENERATION_UNAVAILABLE') break
           await sleep(400 * 2 ** attempt)
           continue
         }
@@ -256,7 +261,7 @@ export class GeminiEmbeddings implements EmbeddingProvider {
 export class GeminiImageClient {
   constructor(
     private readonly apiKey: string | null,
-    private readonly model = 'gemini-2.5-flash-image',
+    private readonly model = 'gemini-3.1-flash-image',
   ) {}
 
   configured() {

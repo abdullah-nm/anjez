@@ -10,6 +10,9 @@ export function PrintPreview({
   draft: DesignDraft
 }) {
   const logoSrc = brand.logoUrl || undefined
+  if (draft.generatedImageDataUrl?.startsWith('data:image/svg')) {
+    return <img className="preview-file" src={draft.generatedImageDataUrl} alt={`معاينة ${product.name}`} />
+  }
 
   return (
     <div
@@ -36,11 +39,10 @@ export function PrintPreview({
           }}
         />
       )}
-      <p className="preview-kicker" style={{ color: brand.accentColor }}>
-        {brand.companyName}
-      </p>
-      <h3>{draft.headline || 'عنوان التصميم'}</h3>
-      <p className="preview-sub">{draft.subhead}</p>
+      {draft.headline && <h3>{draft.headline}</h3>}
+      {draft.subhead && draft.subhead !== draft.headline && (
+        <p className="preview-sub">{draft.subhead}</p>
+      )}
       <p className="preview-body">{draft.body}</p>
       <span className="preview-size">{draft.size}</span>
     </div>

@@ -5,10 +5,10 @@ import { useAuth } from '../auth'
 export function Login() {
   const { user, login } = useAuth()
   const location = useLocation()
-  const [email, setEmail] = useState('sara@nebras.sa')
-  const [password, setPassword] = useState('AnjzDemo!26')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
-  const redirectTo = (location.state as { from?: string } | null)?.from || '/knowledge'
+  const redirectTo = (location.state as { from?: string } | null)?.from || '/studio'
 
   if (user) return <Navigate to={redirectTo} replace />
 
@@ -22,31 +22,15 @@ export function Login() {
   return (
     <form className="stack form-narrow" onSubmit={onSubmit}>
       <div className="section-head">
-        <p className="eyebrow">دخول الشركات</p>
-        <h1>جلسة موثّقة لكل شركة قبل استخدام المعرفة</h1>
+        <h1>دخول</h1>
       </div>
-      <p className="lede">
-        هوية الشركة تُؤخذ من الجلسة على الخادم، وليس من المتصفح. حسابان تجريبيان
-        معزولان:
-      </p>
-      <ul className="order-mini">
-        <li>نبراس (إدارة): sara@nebras.sa</li>
-        <li>نبراس (عضو): lina@nebras.sa — يسأل ولا يرفع</li>
-        <li>قمم (إدارة): fahd@qimam.sa</li>
-        <li>كلمة المرور: AnjzDemo!26</li>
-      </ul>
       <label className="field">
         <span>البريد</span>
-        <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+        <input value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="username" />
       </label>
       <label className="field">
         <span>كلمة المرور</span>
-        <input
-          type="password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          required
-        />
+        <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" />
       </label>
       <button type="submit" className="btn btn-primary">
         دخول

@@ -7,7 +7,7 @@ import { newId } from '../lib/crypto.ts'
 import { AppError } from '../lib/errors.ts'
 import type { ImageGenerator } from '../lib/imageGeneration.ts'
 import type { LlmProvider, SessionUser } from '../types.ts'
-import { composeDesign } from './compose.ts'
+import { composeDesign, previewTemplate } from './compose.ts'
 import { GeminiImageClient, GeminiTextClient } from './gemini.ts'
 import { occasionCatalog, reminderOffsets, suggestedProducts } from './occasions.ts'
 import { dispatchDueReminders } from './reminders.ts'
@@ -260,6 +260,33 @@ export function registerPlatformRoutes(
       const user = await deps.requireUser(req)
       const eventId = typeof req.query.eventId === 'string' ? req.query.eventId : undefined
       res.json({ designs: deps.platform.listDesigns(user.companyId, eventId) })
+    } catch (error) {
+      next(error)
+    }
+  })
+
+  app.post('/api/designs/preview', async (req, res, next) => {
+    try {
+      const user = await deps.requireUser(req)
+      const body = z.object({
+        productName: z.string().trim().max(80).default(''),
+        headline: z.string().trim().max(200).default(''),
+        subhead: z.string().trim().max(200).default(''),
+        body: z.string().trim().max(400).default(''),
+        dimensions: z.string().trim().max(40).default('square'),
+      }).parse(req.body ?? {})
+      const brand = ensureBrand(deps.platform, user)
+      const logo = deps.storage.readCompanyLogo(user.companyId, brand.logoPath, brand.logoMime)
+      const svg = previewTemplate({
+        brand,
+        logoHref: logo.ok ? logo.dataUrl : null,
+        productName: body.productName,
+        headline: body.headline,
+        subhead: body.subhead,
+        body: body.body,
+        dimensions: body.dimensions,
+      })
+      res.json({ svg })
     } catch (error) {
       next(error)
     }

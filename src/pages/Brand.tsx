@@ -2,7 +2,6 @@ import { useEffect, useState, type DragEvent, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../auth'
 import { fetchBrandLogoObjectUrl } from '../brandLogo'
-import { defaultBrand } from '../data'
 import { useStore } from '../store'
 import type { CompanyBrand, Tone } from '../types'
 
@@ -252,8 +251,23 @@ export function Brand() {
       </fieldset>
       <div className="hero-actions">
         <button type="submit" className="btn btn-primary">حفظ الهوية</button>
-        <button type="button" className="btn btn-ghost" onClick={() => setForm({ ...defaultBrand, description: '', language: 'ar', logoPath: null })}>
-          إعادة النموذج الافتراضي
+        <button
+          type="button"
+          className="btn btn-ghost"
+          onClick={() => setForm((current) => ({
+            ...current,
+            companyName: '',
+            industry: '',
+            contactName: '',
+            email: '',
+            phone: '',
+            city: '',
+            slogan: '',
+            description: '',
+            logoPath: null,
+          }))}
+        >
+          مسح الحقول
         </button>
       </div>
       {message && <p className="notice ok">{message}</p>}

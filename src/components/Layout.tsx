@@ -1,22 +1,36 @@
 import { useEffect, useState } from 'react'
-import { NavLink, Outlet } from 'react-router-dom'
+import { Link, NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useAuth } from '../auth'
-import { useStore } from '../store'
+
+const steps = [
+  { id: 1, label: 'المنتج', to: '/studio' },
+  { id: 2, label: 'النص', to: '/studio' },
+  { id: 3, label: 'المعاينة', to: '/studio' },
+  { id: 4, label: 'الطلب', to: '/order' },
+]
 
 const links = [
-  { to: '/', label: 'لوحة الشركة' },
-  { to: '/studio', label: 'استوديو التصميم' },
-  { to: '/brand', label: 'هوية الشركة' },
+  { to: '/home', label: 'اللوحة' },
+  { to: '/brand', label: 'الهوية' },
   { to: '/calendar', label: 'التقويم' },
-  { to: '/order', label: 'طلب طباعة' },
-  { to: '/knowledge', label: 'معرفة الشركة' },
+  { to: '/knowledge', label: 'المعرفة' },
 ]
 
 export function Layout() {
-  const { brand, orders } = useStore()
   const { user, logout } = useAuth()
+  const location = useLocation()
   const [unread, setUnread] = useState(0)
-  const companyLabel = user?.companyName || brand.companyName
+  const [studioStep, setStudioStep] = useState('1')
+  const path = location.pathname
+  const showSteps = path.startsWith('/studio') || path.startsWith('/order') || path.startsWith('/home')
+  const current = path.startsWith('/order') ? 4 : path.startsWith('/studio') ? Number(studioStep) || 1 : 0
+
+  useEffect(() => {
+    const sync = () => setStudioStep(sessionStorage.getItem('anjz-step') || '1')
+    sync()
+    window.addEventListener('anjz-step', sync)
+    return () => window.removeEventListener('anjz-step', sync)
+  }, [path])
 
   useEffect(() => {
     if (!user) return
@@ -28,48 +42,52 @@ export function Layout() {
   return (
     <div className="shell">
       <header className="topbar">
-        <div className="brand-mark">
-          <span className="logo-mark" aria-hidden="true">
-            أ
-          </span>
-          <div>
-            <p className="product-name">طباعة ذكية</p>
-            <p className="product-sub">منصة أنجز · {companyLabel}</p>
-          </div>
-        </div>
-        <nav className="nav" aria-label="التنقل الرئيسي">
-          {links.map((link) => (
-            <NavLink
-              key={link.to}
-              to={link.to}
-              end={link.to === '/'}
-              className={({ isActive }) =>
-                isActive ? 'nav-link active' : 'nav-link'
-              }
-            >
-              {link.label}
-            </NavLink>
-          ))}
-        </nav>
+        <NavLink to="/" end className="brand-mark" aria-label="أنجز">
+          <svg className="logo-mark" viewBox="0 0 32 32" aria-hidden="true">
+            <rect x="6" y="5" width="14" height="18" rx="2" fill="none" stroke="currentColor" strokeWidth="2" />
+            <path d="M12 23h12a2 2 0 0 0 2-2V9" fill="none" stroke="currentColor" strokeWidth="2" />
+          </svg>
+          <span className="product-name">أنجز</span>
+        </NavLink>
         <div className="session-chip">
+          <nav className="nav" aria-label="صفحات أخرى">
+            {links.map((link) => (
+              <NavLink key={link.to} to={link.to} className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}>
+                {link.label}
+              </NavLink>
+            ))}
+            {user && <NavLink className="nav-link" to="/notifications">تنبيهات{unread ? ` (${unread})` : ''}</NavLink>}
+          </nav>
           {user ? (
             <>
-              <NavLink className="nav-link" to="/notifications">تنبيهات{unread ? ` (${unread})` : ''}</NavLink>
               <span>{user.name}</span>
-              <button type="button" className="btn btn-ghost session-logout" onClick={() => void logout()}>
-                خروج
-              </button>
+              <button type="button" className="btn btn-ghost session-logout" onClick={() => void logout()}>خروج</button>
             </>
           ) : (
-            <NavLink className="nav-link" to="/login">
-              دخول المعرفة
-            </NavLink>
+            <NavLink className="btn btn-primary nav-cta" to="/login" state={{ from: location.pathname }}>دخول</NavLink>
           )}
-          <p className="orders-chip">
-            {orders.length > 0 ? `${orders.length} طلب محفوظ` : 'لا طلبات بعد'}
-          </p>
         </div>
       </header>
+      {showSteps && (
+        <div className="steps-wrap">
+          <p className="steps-caption">{current ? `الخطوة ${current} من ٤` : 'الخطوات'}</p>
+          <ol className="steps" aria-label="خطوات التصميم">
+            {steps.map((step, index) => (
+              <li key={step.id} className="step-item">
+                {index > 0 && <span className={step.id <= current ? 'step-line done' : 'step-line'} aria-hidden="true" />}
+                <Link
+                  to={step.to}
+                  className={step.id === current ? 'step current' : step.id < current ? 'step done' : 'step'}
+                  aria-current={step.id === current ? 'step' : undefined}
+                >
+                  <span className="step-index">{step.id}</span>
+                  <span>{step.label}</span>
+                </Link>
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
       <main className="page">
         <Outlet />
       </main>

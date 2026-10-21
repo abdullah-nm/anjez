@@ -6,8 +6,9 @@ import {
   useState,
   type ReactNode,
 } from 'react'
+import { useAuth } from './auth'
 import { fetchBrandLogoObjectUrl } from './brandLogo'
-import { defaultBrand, events, products } from './data'
+import { defaultBrand, products } from './data'
 import type { CompanyBrand, DesignDraft, PrintOrder } from './types'
 
 const BRAND_KEY = 'anjz-brand'
@@ -25,10 +26,10 @@ function readJson<T>(key: string, fallback: T): T {
 
 const initialDraft: DesignDraft = {
   productId: products[0].id,
-  eventId: events[0].id,
-  headline: defaultBrand.companyName,
-  subhead: events[0].title,
-  body: defaultBrand.slogan,
+  eventId: '',
+  headline: '',
+  subhead: '',
+  body: '',
   size: products[0].sizes[0],
 }
 
@@ -44,17 +45,39 @@ interface AppStore {
 const StoreContext = createContext<AppStore | null>(null)
 
 export function StoreProvider({ children }: { children: ReactNode }) {
-  const [brand, setBrand] = useState<CompanyBrand>(() =>
-    readJson(BRAND_KEY, defaultBrand),
-  )
-  const [draft, setDraftState] = useState<DesignDraft>(() =>
-    readJson(DRAFT_KEY, initialDraft),
-  )
+  const { user } = useAuth()
+  const [brand, setBrand] = useState<CompanyBrand>(() => {
+    const stored = readJson<Partial<CompanyBrand>>(BRAND_KEY, {})
+    return {
+      companyName: stored.companyName || '',
+      industry: stored.industry || '',
+      contactName: stored.contactName || '',
+      email: stored.email || '',
+      phone: stored.phone || '',
+      city: stored.city || '',
+      primaryColor: stored.primaryColor || '#142433',
+      accentColor: stored.accentColor || '#c4a46a',
+      slogan: stored.slogan || '',
+      tone: stored.tone || 'فاخر',
+      logoUrl: stored.logoUrl,
+    }
+  })
+  const [draft, setDraftState] = useState<DesignDraft>(() => {
+    const stored = readJson(DRAFT_KEY, initialDraft)
+    return {
+      ...initialDraft,
+      ...stored,
+      headline: stored.headline === defaultBrand.companyName ? '' : stored.headline || '',
+      subhead: '',
+      body: '',
+    }
+  })
   const [orders, setOrders] = useState<PrintOrder[]>(() =>
     readJson(ORDERS_KEY, []),
   )
 
   useEffect(() => {
+    if (!user) return
     void (async () => {
       const response = await fetch('/api/brand', { credentials: 'include' })
       if (!response.ok) return
@@ -84,7 +107,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         /* ignore quota */
       }
     })().catch(() => undefined)
-  }, [])
+  }, [user])
 
   const value = useMemo<AppStore>(
     () => ({
@@ -113,7 +136,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           ...input,
           id: `ORD-${Date.now().toString().slice(-6)}`,
           createdAt: new Date().toISOString(),
-          status: 'مستلم',
+          status: 'محفوظ',
         }
         try {
           const next = [order, ...orders]

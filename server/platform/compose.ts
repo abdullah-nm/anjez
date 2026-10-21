@@ -7,6 +7,26 @@ import type { LocalObjectStorage } from './storage.ts'
 import type { PlatformStore } from './store.ts'
 import type { BrandLanguage, BrandProfile, DesignRecord } from './types.ts'
 
+export function previewTemplate(input: {
+  brand: BrandProfile
+  logoHref: string | null
+  productName: string
+  headline: string
+  subhead: string
+  body: string
+  dimensions: string
+}) {
+  return brandedSvg({
+    brand: input.brand,
+    productName: input.productName,
+    headline: input.headline,
+    subhead: input.subhead,
+    body: input.body,
+    dimensions: input.dimensions,
+    logoHref: input.logoHref,
+  })
+}
+
 export async function composeDesign(input: {
   platform: PlatformStore
   storage: LocalObjectStorage
@@ -109,46 +129,9 @@ export async function composeDesign(input: {
 }
 
 async function writeCopy(input: Parameters<typeof composeDesign>[0]) {
-  const fallback = {
-    headline: input.payload.eventTitle || input.brand.companyName,
-    subhead: input.brand.slogan || input.payload.purpose,
-    body: input.payload.content || input.payload.audience,
+  return {
+    headline: input.payload.content.trim() || input.payload.eventTitle.trim(),
+    subhead: input.payload.purpose.trim(),
+    body: input.payload.audience.trim(),
   }
-  const prompt = `Return JSON {"headline","subhead","body"} for a print ${input.payload.productName}.
-Language: ${input.payload.language === 'en' ? 'English' : 'Arabic'}.
-Company: ${input.brand.companyName}. Industry: ${input.brand.industry}. Tone: ${input.brand.tone}.
-Event: ${input.payload.eventTitle}. Audience: ${input.payload.audience}. Purpose: ${input.payload.purpose}.
-User copy: ${input.payload.content}. Extra: ${input.payload.instructions}.
-Do not invent prices, stock, suppliers, or fulfillment. Keep each field under 80 characters.`
-
-  try {
-    if (input.geminiText.configured()) {
-      const raw = await input.geminiText.generateJson(prompt)
-      const parsed = JSON.parse(extractJson(raw)) as { headline?: string; subhead?: string; body?: string }
-      return {
-        headline: parsed.headline || fallback.headline,
-        subhead: parsed.subhead || fallback.subhead,
-        body: parsed.body || fallback.body,
-      }
-    }
-    const raw = await input.llm.complete({
-      system: 'Return only JSON with headline, subhead, body. No extra keys.',
-      user: prompt,
-    })
-    const parsed = JSON.parse(extractJson(raw)) as { headline?: string; subhead?: string; body?: string }
-    return {
-      headline: parsed.headline || fallback.headline,
-      subhead: parsed.subhead || fallback.subhead,
-      body: parsed.body || fallback.body,
-    }
-  } catch {
-    return fallback
-  }
-}
-
-function extractJson(raw: string) {
-  const start = raw.indexOf('{')
-  const end = raw.lastIndexOf('}')
-  if (start < 0 || end < start) throw new Error('no json')
-  return raw.slice(start, end + 1)
 }

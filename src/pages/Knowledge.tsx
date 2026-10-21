@@ -237,7 +237,7 @@ export function Knowledge() {
 
       {error && <p className="notice err">{error}</p>}
       <p className="muted">
-        <Link to="/">العودة للوحة</Link>
+        <Link to="/home">العودة للوحة</Link>
       </p>
     </div>
   )

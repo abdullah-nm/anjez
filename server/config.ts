@@ -55,7 +55,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     null
   const geminiTextModel = env.GEMINI_TEXT_MODEL?.trim() || 'gemini-3.8-flash'
   const geminiEmbeddingModel = env.GEMINI_EMBEDDING_MODEL?.trim() || 'gemini-embedding-001'
-  const geminiImageModel = env.GEMINI_IMAGE_MODEL?.trim() || 'gemini-2.5-flash-image'
+  const geminiImageModel = env.GEMINI_IMAGE_MODEL?.trim() || 'gemini-3.1-flash-image'
   const openaiKey = blank(env, 'OPENAI_API_KEY')
 
   const embeddingExplicit = Boolean(blank(env, 'EMBEDDING_MODEL') || blank(env, 'EMBEDDING_BASE_URL'))

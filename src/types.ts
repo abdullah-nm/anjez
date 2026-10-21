@@ -57,6 +57,7 @@ export interface Recommendation {
 export interface DesignDraft {
   productId: string
   eventId: string
+  eventTitle?: string
   headline: string
   subhead: string
   body: string
@@ -77,5 +78,6 @@ export interface PrintOrder {
   headline: string
   subhead: string
   body: string
-  status: 'مستلم' | 'قيد التجهيز'
+  eventTitle?: string
+  status: 'مستلم' | 'قيد التجهيز' | 'محفوظ'
 }

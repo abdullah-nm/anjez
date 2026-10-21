@@ -172,6 +172,15 @@ export const products: PrintProduct[] = [
   },
 ]
 
+export const featuredProductIds = [
+  'prd-invite',
+  'prd-banner',
+  'prd-rollup',
+  'prd-poster',
+  'prd-card',
+  'prd-greeting',
+]
+
 export const recommendations: Recommendation[] = [
   {
     id: 'rec-1',

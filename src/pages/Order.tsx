@@ -1,30 +1,34 @@
 import { useState, type FormEvent } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { eventById, events, formatMoney, productById, products } from '../data'
+import { Link, useNavigate } from 'react-router-dom'
+import { eventById, formatMoney, productById, products } from '../data'
 import { PrintPreview } from '../components/PrintPreview'
 import { useStore } from '../store'
+
+function defaultDelivery(leadDays: number, eventDate?: string) {
+  if (eventDate) return eventDate
+  const next = new Date()
+  next.setDate(next.getDate() + leadDays)
+  return next.toISOString().slice(0, 10)
+}
 
 export function Order() {
   const { brand, draft, placeOrder } = useStore()
   const navigate = useNavigate()
   const product = productById(draft.productId) ?? products[0]
-  const event = eventById(draft.eventId) ?? events[0]
+  const catalogEvent = eventById(draft.eventId)
+  const eventTitle = draft.eventTitle || catalogEvent?.title || 'بدون مناسبة'
   const [quantity, setQuantity] = useState(100)
-  const [deliveryDate, setDeliveryDate] = useState(event.date)
-  const [address, setAddress] = useState(
-    `قاعة الاستلام — ${event.venue}، ${brand.city}`,
-  )
+  const [deliveryDate, setDeliveryDate] = useState(() => defaultDelivery(product.leadDays, catalogEvent?.date))
+  const [address, setAddress] = useState(brand.city || '')
   const [notes, setNotes] = useState('')
   const [error, setError] = useState<string | null>(null)
-
-  const estimate = Math.round(product.fromPrice * quantity * 10) / 10
 
   function onSubmit(formEvent: FormEvent) {
     formEvent.preventDefault()
     setError(null)
     const order = placeOrder({
       productId: product.id,
-      eventId: event.id,
+      eventId: draft.eventId,
       size: draft.size,
       quantity,
       deliveryDate,
@@ -33,6 +37,7 @@ export function Order() {
       headline: draft.headline,
       subhead: draft.subhead,
       body: draft.body,
+      eventTitle,
     })
     if (!order) {
       setError('لم يُحفظ الطلب. لم يتم تأكيد الإرسال.')
@@ -45,14 +50,18 @@ export function Order() {
     <form className="studio" onSubmit={onSubmit}>
       <section className="stack">
         <div className="section-head">
-          <p className="eyebrow">طلب طباعة</p>
-          <h1>راجع التصميم وأكمل بيانات التسليم</h1>
+          <h1>طلب الطباعة</h1>
         </div>
 
         <p>
-          المنتج: <strong>{product.name}</strong> · المناسبة:{' '}
-          <strong>{event.title}</strong>
+          المنتج: <strong>{product.name}</strong> · المقاس: <strong>{draft.size}</strong> · المناسبة: <strong>{eventTitle}</strong>
         </p>
+        {!draft.generatedImageDataUrl && (
+          <p className="notice">
+            لا توجد معاينة مولَّدة بعد. يمكنك <Link to="/studio">العودة للاستوديو</Link> أو حفظ الطلب بالنص الحالي.
+          </p>
+        )}
+        <p className="preview-caption">المعاينة ليست ملف طباعة.</p>
 
         <label className="field">
           <span>الكمية</span>
@@ -93,23 +102,21 @@ export function Order() {
           />
         </label>
 
-        <p className="estimate">
-          تقدير مبدئي: {formatMoney(estimate)} · مدة التجهيز المعتادة{' '}
-          {product.leadDays} أيام عمل
+        <p className="muted">
+          سعر الكتالوج للوحدة {formatMoney(product.fromPrice)} للاستئناس فقط، وليس عرض مطبعة.
+          المدة المعتادة في الكتالوج {product.leadDays} أيام عمل.
         </p>
 
         <button type="submit" className="btn btn-primary">
-          إرسال طلب الطباعة
+          حفظ طلب المراجعة
         </button>
         {error && <p className="notice err">{error}</p>}
       </section>
 
-      <aside className="preview-panel card">
-        <p className="eyebrow">ملخص التصميم</p>
+      <aside className="preview-panel card stack">
+        <p className="eyebrow">معاينة الشاشة · ليست ملف طباعة</p>
         <PrintPreview brand={brand} product={product} draft={draft} />
-        <p className="muted">
-          الطلب يُحفظ على هذا الجهاز للعرض التجريبي، دون إرسال لمطبعة حقيقية.
-        </p>
+        <p className="muted">يُحفظ الطلب على هذا الجهاز دون إرسال إلى مطبعة.</p>
       </aside>
     </form>
   )
