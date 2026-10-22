@@ -79,10 +79,45 @@ create table if not exists notifications (
 create table if not exists reminder_deliveries (
   id text primary key,
   company_id text not null,
+  user_id text not null default '',
   event_id text not null,
   offset_days int not null,
   delivered_on date not null,
-  unique (company_id, event_id, offset_days, delivered_on)
+  unique (company_id, user_id, event_id, offset_days, delivered_on)
+);
+
+-- Global Saudi occasions. No company_id. Company calendars read this table; they do not copy it.
+create table if not exists system_occasions (
+  key text primary key,
+  title_ar text not null,
+  title_en text not null,
+  category text not null,
+  date date,
+  date_certainty text not null,
+  date_note text not null default '',
+  source text not null default '',
+  cycle text not null default '',
+  recurring boolean not null default false,
+  checked_at timestamptz,
+  sync_status text not null default 'ok',
+  history jsonb not null default '[]',
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists calendar_sync (
+  id text primary key,
+  status text not null,
+  source text not null default '',
+  checked_at timestamptz,
+  attempted_at timestamptz,
+  message text not null default ''
+);
+
+create table if not exists reminder_preferences (
+  company_id text not null,
+  user_id text not null,
+  offsets jsonb not null,
+  primary key (company_id, user_id)
 );
 
 alter table brand_profiles enable row level security;

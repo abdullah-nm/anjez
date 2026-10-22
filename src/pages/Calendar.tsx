@@ -1,8 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { Link, Navigate, useLocation, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../auth'
-import { productById } from '../data'
-
 type Certainty = 'official' | 'estimated' | 'unannounced'
 
 type EventRow = {
@@ -21,15 +19,27 @@ type EventRow = {
   dateNote: string
 }
 
-type Occasion = {
+type SystemOccasion = {
+  id: string
   key: string
   titleAr: string
   date: string | null
   category: 'national' | 'islamic' | 'season'
   dateNote: string
-  certainty: Certainty
+  dateCertainty: Certainty
+  source: string
+  checkedAt: string | null
+  syncStatus: 'ok' | 'stale'
   recurring: boolean
-  needsAnnualUpdate: boolean
+  history: Array<{ date: string | null, cycle: string, dateCertainty: Certainty }>
+}
+
+type SyncState = {
+  status: 'ok' | 'stale'
+  message: string
+  checkedAt: string | null
+  attemptedAt: string | null
+  source: string
 }
 
 const reminderChoices = [30, 14, 7, 3, 1]
@@ -57,7 +67,7 @@ const categoryLabel: Record<string, string> = {
 const certaintyLabel: Record<Certainty, string> = {
   official: 'مؤكد',
   estimated: 'تقديري',
-  unannounced: 'يُحدَّد لاحقًا',
+  unannounced: 'بانتظار الإعلان',
 }
 
 function riyadhParts(date = new Date()) {
@@ -75,13 +85,19 @@ function pad(value: number) {
   return String(value).padStart(2, '0')
 }
 
+function riyadhStamp(iso: string | null) {
+  if (!iso) return 'لم يُتحقق بعد'
+  return new Date(iso).toLocaleString('ar-SA', { timeZone: 'Asia/Riyadh', dateStyle: 'medium', timeStyle: 'short' })
+}
+
 export function CalendarPage() {
   const { user, loading } = useAuth()
   const location = useLocation()
   const [params] = useSearchParams()
   const today = riyadhParts()
   const [events, setEvents] = useState<EventRow[]>([])
-  const [occasions, setOccasions] = useState<Occasion[]>([])
+  const [systemOccasions, setSystemOccasions] = useState<SystemOccasion[]>([])
+  const [sync, setSync] = useState<SyncState | null>(null)
   const [view, setView] = useState<'month' | 'week' | 'list'>('month')
   const [form, setForm] = useState(emptyForm)
   const [editing, setEditing] = useState<string | null>(null)
@@ -96,12 +112,11 @@ export function CalendarPage() {
   }, [user])
 
   async function reload() {
-    const [ev, meta] = await Promise.all([
-      fetch('/api/events', { credentials: 'include' }).then((response) => response.json()),
-      fetch('/api/platform/meta', { credentials: 'include' }).then((response) => response.json()),
-    ])
-    setEvents(ev.events || [])
-    setOccasions(meta.occasions || [])
+    const response = await fetch('/api/events', { credentials: 'include' })
+    const body = await response.json()
+    setEvents(body.events || [])
+    setSystemOccasions(body.systemOccasions || [])
+    setSync(body.calendarSync || null)
   }
 
   if (loading) return <p>جارٍ التحميل…</p>
@@ -115,7 +130,7 @@ export function CalendarPage() {
   const dated = visible.filter((event) => event.date && event.status !== 'done')
   const undated = visible.filter((event) => !event.date && event.status !== 'done')
   const history = visible.filter((event) => event.status === 'done')
-  const openKeys = new Set(visible.filter((event) => event.status !== 'done' && event.occasionKey).map((event) => event.occasionKey))
+  const systemDated = systemOccasions.filter((item) => item.date)
 
   function shiftMonth(delta: number) {
     const next = new Date(Date.UTC(year, month - 1 + delta, 1))
@@ -142,22 +157,6 @@ export function CalendarPage() {
     await reload()
   }
 
-  async function addOccasion(item: Occasion) {
-    setError(null)
-    const response = await fetch('/api/events/from-occasion', {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ key: item.key }),
-    })
-    const body = await response.json()
-    if (!response.ok) {
-      setError(body.error || 'تعذر إضافة المناسبة.')
-      return
-    }
-    await reload()
-  }
-
   async function saveAnnual(eventId: string) {
     const draft = annual[eventId]
     if (!draft?.date) return
@@ -177,7 +176,7 @@ export function CalendarPage() {
   }
 
   const weekStart = `${year}-${pad(month)}-${pad(today.month === month && today.year === year ? today.day : 1)}`
-  const weekEvents = dated.filter((event) => {
+  const weekEvents = [...dated, ...systemDated.map((item) => ({ id: item.id, title: item.titleAr, date: item.date, dateCertainty: item.dateCertainty }))].filter((event) => {
     if (!event.date) return false
     const anchor = new Date(`${weekStart}T12:00:00+03:00`)
     const day = anchor.getUTCDay()
@@ -233,7 +232,13 @@ export function CalendarPage() {
           <button type="button" className={view === 'list' ? 'btn btn-primary' : 'btn btn-ghost'} onClick={() => setView('list')}>قائمة</button>
         </div>
       </div>
-      <p className="muted">التذكير داخل التطبيق يُفحص كل ساعة ما دام الخادم يعمل، وفي يوم الاستحقاق بتوقيت الرياض. لا يُرسل بريد.</p>
+      <p className="muted">المناسبات العامة يظهرها النظام لكل الشركات. التذكير داخل التطبيق يُفحص عند إقلاع الخادم ثم كل ساعة ما دامت العملية تعمل، وفي يوم الاستحقاق بتوقيت الرياض. لا يُرسل بريد.</p>
+      {sync?.status === 'stale' && (
+        <p className="notice" role="status">
+          تأخر تحديث المواعيد الهجرية. يُعرض آخر موعد موثوق. {sync.message}
+          {sync.checkedAt ? ` آخر نجاح: ${riyadhStamp(sync.checkedAt)}.` : ''}
+        </p>
+      )}
 
       <div className="hero-actions">
         <button type="button" className="btn btn-ghost" onClick={() => shiftMonth(-1)}>الشهر السابق</button>
@@ -246,10 +251,14 @@ export function CalendarPage() {
           {cells.map((day, index) => {
             const ymd = day > 0 ? `${year}-${pad(month)}-${pad(day)}` : ''
             const dayEvents = dated.filter((event) => event.date === ymd)
+            const daySystem = systemDated.filter((item) => item.date === ymd)
             return (
               <div key={index} className="cal-cell">
                 {day > 0 && <strong>{day}</strong>}
                 {dayEvents.map(eventButton)}
+                {daySystem.map((item) => (
+                  <span key={item.id} className={`cal-event cal-system cal-${item.dateCertainty}`}>{item.titleAr}</span>
+                ))}
               </div>
             )
           })}
@@ -267,7 +276,7 @@ export function CalendarPage() {
 
       {view === 'list' && (
         <div className="stack">
-          {dated.length === 0 && undated.length === 0 && <p className="muted">لا مناسبات مفتوحة. أضف مناسبة أو اختر قالباً.</p>}
+          {dated.length === 0 && systemDated.length === 0 && undated.length === 0 && <p className="muted">لا مناسبات شركة مفتوحة. المناسبات العامة ظاهرة في قسم النظام.</p>}
           {dated.map((event) => (
             <EventCard key={event.id} event={event} onReload={reload} annual={annual} setAnnual={setAnnual} onAnnual={saveAnnual} />
           ))}
@@ -348,24 +357,28 @@ export function CalendarPage() {
       </form>
 
       <section className="stack">
-        <h2>قوالب المناسبات</h2>
-        <p className="muted">المواعيد الميلادية الثابتة تُضاف لأقرب سنة. المناسبات الهجرية والمواسم تُضاف بلا تاريخ إلى أن تُدخله. مثال منتج: {productById('prd-poster')?.name}</p>
+        <h2>مناسبات النظام</h2>
+        <p className="muted">مناسبة عامة، منفصلة عن مناسبات الشركة. لا تُعدَّل من حساب الشركة.</p>
         {groups.map((group) => (
           <div key={group.id} className="stack">
             <h3>{group.title}</h3>
-            {occasions.filter((item) => item.category === group.id).map((item) => (
-              <article key={item.key} className="card rec-card">
+            {systemOccasions.filter((item) => item.category === group.id).map((item) => (
+              <article key={item.key} className={`card rec-card cal-system-card cal-cat-${item.category}`}>
                 <div>
-                  <p className="eyebrow">{categoryLabel[item.category]} · {certaintyLabel[item.certainty]}</p>
+                  <p className="eyebrow">
+                    <span className={`cal-badge cal-badge-${item.dateCertainty}`}>{certaintyLabel[item.dateCertainty]}</span>
+                    <span className="cal-badge">{categoryLabel[item.category]}</span>
+                    مناسبة عامة
+                  </p>
                   <h3>{item.titleAr}</h3>
-                  <p>{item.date || 'يُحدَّد لاحقًا'}</p>
-                  <p className="muted">{item.dateNote}</p>
+                  <p>{item.date || 'بانتظار الإعلان الرسمي'}</p>
+                  <p className="muted">المصدر: {item.source}</p>
+                  <p className="muted">آخر تحقق: {riyadhStamp(item.checkedAt)}{item.syncStatus === 'stale' ? ' · تأخر التحديث' : ''}</p>
+                  {item.dateNote && <p className="muted">{item.dateNote}</p>}
+                  {item.history.length > 0 && (
+                    <p className="muted">سجل سابق: {item.history.map((entry) => entry.date || 'بلا تاريخ').join('، ')}</p>
+                  )}
                 </div>
-                {openKeys.has(item.key) ? (
-                  <span className="muted">مضافة للتقويم</span>
-                ) : (
-                  <button type="button" className="btn btn-secondary" onClick={() => void addOccasion(item)}>أضف للتقويم</button>
-                )}
               </article>
             ))}
           </div>
@@ -392,7 +405,10 @@ function EventCard({
   return (
     <article className="card rec-card">
       <div>
-        <p className="eyebrow">{categoryLabel[event.category] || event.category} · {certaintyLabel[event.dateCertainty]}</p>
+        <p className="eyebrow">
+          <span className={`cal-badge cal-badge-${event.dateCertainty}`}>{certaintyLabel[event.dateCertainty]}</span>
+          <span className="cal-badge">{categoryLabel[event.category] || event.category}</span>
+        </p>
         <h3>{event.title}</h3>
         <p>{event.date || 'يُحدَّد لاحقًا'} {event.time || ''}</p>
         <p>{event.description}</p>

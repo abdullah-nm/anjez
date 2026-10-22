@@ -3,7 +3,7 @@ import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { newId } from '../lib/crypto.ts'
 import { AppError } from '../lib/errors.ts'
-import type { BrandProfile, CompanyEventRecord, DesignRecord, DesignStatus, NotificationRecord } from './types.ts'
+import type { BrandProfile, CalendarSyncState, CompanyEventRecord, DateCertainty, DesignRecord, DesignStatus, NotificationRecord, SystemOccasionRecord } from './types.ts'
 
 function requireCompany(companyId: string) {
   if (!companyId?.trim()) throw new AppError('company scope required', 500, 'COMPANY_SCOPE_REQUIRED')
@@ -105,11 +105,63 @@ export class PlatformStore {
       CREATE TABLE IF NOT EXISTS reminder_deliveries (
         id TEXT PRIMARY KEY,
         company_id TEXT NOT NULL,
+        user_id TEXT NOT NULL DEFAULT '',
         event_id TEXT NOT NULL,
         offset_days INTEGER NOT NULL,
         delivered_on TEXT NOT NULL,
-        UNIQUE (company_id, event_id, offset_days, delivered_on)
+        UNIQUE (company_id, user_id, event_id, offset_days, delivered_on)
       );
+      CREATE TABLE IF NOT EXISTS reminder_preferences (
+        company_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        offsets TEXT NOT NULL,
+        PRIMARY KEY (company_id, user_id)
+      );
+      CREATE TABLE IF NOT EXISTS system_occasions (
+        key TEXT PRIMARY KEY,
+        title_ar TEXT NOT NULL,
+        title_en TEXT NOT NULL,
+        category TEXT NOT NULL,
+        date TEXT,
+        date_certainty TEXT NOT NULL,
+        date_note TEXT NOT NULL DEFAULT '',
+        source TEXT NOT NULL DEFAULT '',
+        cycle TEXT NOT NULL DEFAULT '',
+        recurring INTEGER NOT NULL DEFAULT 0,
+        checked_at TEXT,
+        sync_status TEXT NOT NULL DEFAULT 'ok',
+        history TEXT NOT NULL DEFAULT '[]',
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS calendar_sync (
+        id TEXT PRIMARY KEY,
+        status TEXT NOT NULL,
+        source TEXT NOT NULL DEFAULT '',
+        checked_at TEXT,
+        attempted_at TEXT,
+        message TEXT NOT NULL DEFAULT ''
+      );
+    `)
+    this.migrateReminders()
+  }
+
+  private migrateReminders() {
+    const info = this.db.prepare('PRAGMA table_info(reminder_deliveries)').all() as { name: string }[]
+    if (!info.length || info.some((column) => column.name === 'user_id')) return
+    this.db.exec(`
+      CREATE TABLE reminder_deliveries_next (
+        id TEXT PRIMARY KEY,
+        company_id TEXT NOT NULL,
+        user_id TEXT NOT NULL DEFAULT '',
+        event_id TEXT NOT NULL,
+        offset_days INTEGER NOT NULL,
+        delivered_on TEXT NOT NULL,
+        UNIQUE (company_id, user_id, event_id, offset_days, delivered_on)
+      );
+      INSERT INTO reminder_deliveries_next (id, company_id, user_id, event_id, offset_days, delivered_on)
+      SELECT id, company_id, '', event_id, offset_days, delivered_on FROM reminder_deliveries;
+      DROP TABLE reminder_deliveries;
+      ALTER TABLE reminder_deliveries_next RENAME TO reminder_deliveries;
     `)
   }
 
@@ -371,8 +423,88 @@ export class PlatformStore {
     this.db.exec('COMMIT')
   }
 
+  listSystemOccasions() {
+    const rows = this.db.prepare(
+      'SELECT * FROM system_occasions ORDER BY date IS NULL, date ASC',
+    ).all() as Record<string, unknown>[]
+    return rows.map(mapSystemOccasion)
+  }
+
+  getSystemOccasion(key: string) {
+    const row = this.db.prepare('SELECT * FROM system_occasions WHERE key = ?').get(key) as Record<string, unknown> | undefined
+    return row ? mapSystemOccasion(row) : null
+  }
+
+  upsertSystemOccasion(occasion: SystemOccasionRecord) {
+    this.db.prepare(
+      `INSERT INTO system_occasions (
+        key, title_ar, title_en, category, date, date_certainty, date_note, source, cycle, recurring,
+        checked_at, sync_status, history, updated_at
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      ON CONFLICT(key) DO UPDATE SET
+        title_ar=excluded.title_ar, title_en=excluded.title_en, category=excluded.category, date=excluded.date,
+        date_certainty=excluded.date_certainty, date_note=excluded.date_note, source=excluded.source,
+        cycle=excluded.cycle, recurring=excluded.recurring, checked_at=excluded.checked_at,
+        sync_status=excluded.sync_status, history=excluded.history, updated_at=excluded.updated_at`,
+    ).run(
+      occasion.key,
+      occasion.titleAr,
+      occasion.titleEn,
+      occasion.category,
+      occasion.date,
+      occasion.dateCertainty,
+      occasion.dateNote,
+      occasion.source,
+      occasion.cycle,
+      occasion.recurring ? 1 : 0,
+      occasion.checkedAt,
+      occasion.syncStatus,
+      JSON.stringify(occasion.history),
+      occasion.updatedAt,
+    )
+  }
+
+  calendarSyncState(): CalendarSyncState | null {
+    const row = this.db.prepare(`SELECT * FROM calendar_sync WHERE id = 'hijri'`).get() as Record<string, unknown> | undefined
+    if (!row) return null
+    return {
+      status: row.status === 'stale' ? 'stale' : 'ok',
+      source: String(row.source || ''),
+      checkedAt: row.checked_at ? String(row.checked_at) : null,
+      attemptedAt: row.attempted_at ? String(row.attempted_at) : null,
+      message: String(row.message || ''),
+    }
+  }
+
+  saveCalendarSync(state: CalendarSyncState) {
+    this.db.prepare(
+      `INSERT INTO calendar_sync (id, status, source, checked_at, attempted_at, message)
+       VALUES ('hijri', ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         status=excluded.status, source=excluded.source, checked_at=excluded.checked_at,
+         attempted_at=excluded.attempted_at, message=excluded.message`,
+    ).run(state.status, state.source, state.checkedAt, state.attemptedAt, state.message)
+  }
+
+  reminderPreference(companyId: string, userId: string) {
+    const row = this.db.prepare(
+      'SELECT offsets FROM reminder_preferences WHERE company_id = ? AND user_id = ?',
+    ).get(requireCompany(companyId), userId) as { offsets?: string } | undefined
+    if (!row) return [30, 14, 7, 3, 1]
+    const parsed = JSON.parse(String(row.offsets || '[]')) as number[]
+    return parsed.filter((day) => [30, 14, 7, 3, 1].includes(day))
+  }
+
+  setReminderPreference(companyId: string, userId: string, offsets: number[]) {
+    this.db.prepare(
+      `INSERT INTO reminder_preferences (company_id, user_id, offsets) VALUES (?,?,?)
+       ON CONFLICT(company_id, user_id) DO UPDATE SET offsets=excluded.offsets`,
+    ).run(requireCompany(companyId), userId, JSON.stringify(offsets))
+  }
+
   purgeCompany(companyId: string, userIds: string[]) {
     this.db.prepare('DELETE FROM reminder_deliveries WHERE company_id = ?').run(companyId)
+    this.db.prepare('DELETE FROM reminder_preferences WHERE company_id = ?').run(companyId)
     this.db.prepare('DELETE FROM designs WHERE company_id = ?').run(companyId)
     this.db.prepare('DELETE FROM company_events WHERE company_id = ?').run(companyId)
     this.db.prepare('DELETE FROM brand_profiles WHERE company_id = ?').run(companyId)
@@ -382,13 +514,14 @@ export class PlatformStore {
     }
   }
 
+  companyIds() {
+    return Object.keys(KNOWN_COMPANY_USERS)
+  }
+
   companyUserIds(companyId: string, fallbackUserId: string) {
-    const known: Record<string, string[]> = {
-      company_almarai: ['user_almarai_admin', 'user_almarai_member'],
-      company_qimam: ['user_fahd'],
-    }
-    const ids = new Set<string>([fallbackUserId, ...(known[companyId] ?? [])])
+    const ids = new Set<string>([fallbackUserId, ...(KNOWN_COMPANY_USERS[companyId] ?? [])])
     ids.delete('seed')
+    ids.delete('')
     return [...ids]
   }
 
@@ -398,11 +531,11 @@ export class PlatformStore {
     ).run(toUserId, requireCompany(companyId), fromUserId)
   }
 
-  claimDelivery(companyId: string, eventId: string, offset: number, day: string) {
+  claimDelivery(companyId: string, eventId: string, offset: number, day: string, userId = '') {
     try {
       this.db.prepare(
-        'INSERT INTO reminder_deliveries (id, company_id, event_id, offset_days, delivered_on) VALUES (?,?,?,?,?)',
-      ).run(newId('del'), companyId, eventId, offset, day)
+        'INSERT INTO reminder_deliveries (id, company_id, user_id, event_id, offset_days, delivered_on) VALUES (?,?,?,?,?,?)',
+      ).run(newId('del'), companyId, userId, eventId, offset, day)
       return true
     } catch {
       return false
@@ -420,6 +553,39 @@ export class PlatformStore {
 
   close() {
     this.db.close()
+  }
+}
+
+const KNOWN_COMPANY_USERS: Record<string, string[]> = {
+  company_almarai: ['user_almarai_admin', 'user_almarai_member'],
+  company_qimam: ['user_fahd'],
+}
+
+function mapSystemOccasion(row: Record<string, unknown>): SystemOccasionRecord {
+  const certainty = row.date_certainty
+  const dateCertainty: DateCertainty = certainty === 'estimated' || certainty === 'unannounced' ? certainty : 'official'
+  let history: SystemOccasionRecord['history'] = []
+  try {
+    const parsed = JSON.parse(String(row.history || '[]')) as SystemOccasionRecord['history']
+    if (Array.isArray(parsed)) history = parsed
+  } catch {
+    history = []
+  }
+  return {
+    key: String(row.key),
+    titleAr: String(row.title_ar),
+    titleEn: String(row.title_en),
+    category: row.category === 'islamic' || row.category === 'season' ? row.category : 'national',
+    date: row.date ? String(row.date) : null,
+    dateCertainty,
+    dateNote: row.date_note ? String(row.date_note) : '',
+    source: row.source ? String(row.source) : '',
+    cycle: row.cycle ? String(row.cycle) : '',
+    recurring: Boolean(row.recurring),
+    checkedAt: row.checked_at ? String(row.checked_at) : null,
+    syncStatus: row.sync_status === 'stale' ? 'stale' : 'ok',
+    history,
+    updatedAt: String(row.updated_at),
   }
 }
 

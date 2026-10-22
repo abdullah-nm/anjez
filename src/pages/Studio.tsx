@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { featuredProductIds, productById, products } from '../data'
 import { PrintPreview } from '../components/PrintPreview'
 import { useStore } from '../store'
 import { useAuth } from '../auth'
+import { riyadhToday, upcomingDesignOccasions, type StudioOccasion } from '../studioOccasions'
 
 type SavedDesign = {
   id: string
@@ -17,8 +18,6 @@ type SavedDesign = {
   backgroundNote: string
   status: string
 }
-
-type CompanyEvent = { id: string; title: string; date: string; audience: string }
 
 const statusLabel: Record<string, string> = {
   draft: 'مسودة',
@@ -71,6 +70,7 @@ export function Studio() {
   const { brand, draft, setDraft } = useStore()
   const { user, loading } = useAuth()
   const [params] = useSearchParams()
+  const location = useLocation()
   const [note, setNote] = useState('')
   const [audience, setAudience] = useState('')
   const [tone, setTone] = useState(brand.tone)
@@ -85,13 +85,15 @@ export function Studio() {
   const [previewAttempt, setPreviewAttempt] = useState(0)
   const [saved, setSaved] = useState<SavedDesign[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
-  const [companyEvents, setCompanyEvents] = useState<CompanyEvent[]>([])
+  const [occasions, setOccasions] = useState<StudioOccasion[]>([])
+  const [eventsStatus, setEventsStatus] = useState<'loading' | 'ready' | 'error'>('loading')
+  const [eventsError, setEventsError] = useState('')
+  const [eventsLoad, setEventsLoad] = useState(0)
   const previewRef = useRef<HTMLElement | null>(null)
   const textRef = useRef<HTMLTextAreaElement | null>(null)
   const navigate = useNavigate()
   const product = productById(draft.productId) ?? products[0]
-  const occasions = companyEvents.filter((item, index, list) => list.findIndex((other) => other.title === item.title) === index)
-  const linked = occasions.find((item) => item.id === draft.eventId) || companyEvents.find((item) => item.id === draft.eventId)
+  const selected = occasions.find((item) => item.id === draft.eventId) ?? null
   const active = phase === 'review'
     ? (saved.find((item) => item.id === activeId) ?? saved[0] ?? null)
     : null
@@ -109,9 +111,16 @@ export function Studio() {
 
   useEffect(() => {
     const eventId = params.get('eventId')
-    if (!eventId || eventId === draft.eventId) return
-    setDraft({ ...draft, eventId })
-  }, [params])
+    if (!eventId) return
+    const event = occasions.find((item) => item.id === eventId)
+    if (!event || (draft.eventId === event.id && draft.eventTitle === event.title)) return
+    setDraft({
+      ...draft,
+      eventId: event.id,
+      eventTitle: event.title,
+      headline: draft.headline || event.title,
+    })
+  }, [params, occasions])
 
   useEffect(() => {
     if (!user || phase === 'review') return
@@ -152,9 +161,27 @@ export function Studio() {
 
   useEffect(() => {
     if (!user) return
-    void fetch('/api/events', { credentials: 'include' })
-      .then((r) => r.json())
-      .then((payload) => setCompanyEvents(payload.events || []))
+    const controller = new AbortController()
+    setEventsStatus('loading')
+    setEventsError('')
+    void fetch('/api/events', { credentials: 'include', signal: controller.signal })
+      .then(async (response) => {
+        const payload = await response.json().catch(() => null)
+        if (!response.ok) throw new Error(payload?.error || 'تعذر تحميل مناسبات التقويم.')
+        if (controller.signal.aborted) return
+        setOccasions(upcomingDesignOccasions(payload, riyadhToday()))
+        setEventsStatus('ready')
+      })
+      .catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === 'AbortError') return
+        setEventsStatus('error')
+        setEventsError(error instanceof Error ? error.message : 'تعذر تحميل مناسبات التقويم.')
+      })
+    return () => controller.abort()
+  }, [user?.id, location.key, eventsLoad])
+
+  useEffect(() => {
+    if (!user) return
     void fetch('/api/designs', { credentials: 'include' })
       .then((r) => r.json())
       .then((payload) => setSaved(payload.designs || []))
@@ -166,10 +193,10 @@ export function Studio() {
   }
 
   function chooseEvent(eventId: string) {
-    const event = companyEvents.find((item) => item.id === eventId)
+    const event = occasions.find((item) => item.id === eventId)
     setDraft({
       ...draft,
-      eventId,
+      eventId: event?.id || '',
       eventTitle: event?.title || '',
       headline: draft.headline || event?.title || '',
     })
@@ -185,8 +212,8 @@ export function Studio() {
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          eventId: linked?.id ?? null,
-          eventTitle: linked?.title || draft.eventTitle || headline,
+          eventId: selected?.id ?? null,
+          eventTitle: selected?.title || '',
           productId: product.id,
           productName: product.name,
           purpose: draft.subhead.trim(),
@@ -207,7 +234,7 @@ export function Studio() {
       setPhase('review')
       setDraft({
         ...draft,
-        eventTitle: linked?.title || draft.eventTitle,
+        eventTitle: selected?.title || draft.eventTitle,
         headline: design.headline,
         subhead: design.subhead,
         body: design.body,
@@ -299,7 +326,7 @@ export function Studio() {
   }
 
   function continueToOrder() {
-    setDraft({ ...draft, eventTitle: linked?.title || draft.eventTitle || '' })
+    setDraft({ ...draft, eventId: selected?.id || draft.eventId, eventTitle: selected?.title || draft.eventTitle || '' })
     navigate('/order')
   }
 
@@ -363,15 +390,35 @@ export function Studio() {
             </fieldset>
 
             {user && (
-              <label className="field">
+              <div className="field">
                 <span>المناسبة</span>
-                <select value={linked ? linked.id : ''} onChange={(e) => chooseEvent(e.target.value)}>
-                  <option value="">بدون مناسبة</option>
-                  {occasions.map((item) => (
-                    <option key={item.id} value={item.id}>{item.title}</option>
-                  ))}
-                </select>
-              </label>
+                {eventsStatus === 'loading' && <p className="muted">جارٍ تحميل مناسبات التقويم…</p>}
+                {eventsStatus === 'error' && (
+                  <div className="notice err" role="alert">
+                    <p>{eventsError}</p>
+                    <button type="button" className="btn btn-secondary" onClick={() => setEventsLoad((value) => value + 1)}>
+                      إعادة المحاولة
+                    </button>
+                  </div>
+                )}
+                {eventsStatus === 'ready' && (
+                  <>
+                    <select value={selected?.id || ''} onChange={(event) => chooseEvent(event.target.value)} aria-label="المناسبة">
+                      <option value="">بدون مناسبة</option>
+                      {occasions.map((item) => (
+                        <option key={item.id} value={item.id}>{item.title} · {item.date}</option>
+                      ))}
+                    </select>
+                    {selected && <p className="muted">المناسبة المحددة: {selected.title} · {selected.date}</p>}
+                    {occasions.length === 0 && (
+                      <p className="muted">
+                        لا مناسبات قادمة في تقويم الشركة.{' '}
+                        <Link to="/calendar">أضف مناسبة من التقويم</Link>
+                      </p>
+                    )}
+                  </>
+                )}
+              </div>
             )}
 
             <label className="field">

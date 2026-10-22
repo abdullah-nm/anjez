@@ -996,11 +996,58 @@ legend {
   border-radius: 0.35rem;
   cursor: pointer;
 }
-.cal-estimated {
-  background: #9a6b12;
+.cal-event.cal-estimated,
+.cal-event.cal-unannounced {
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow: inset 0 0 0 1px var(--line);
 }
-.cal-unannounced {
-  background: var(--ink-soft);
+.cal-event.cal-unannounced {
+  color: var(--ink-soft);
+}
+.cal-system {
+  outline: 1px solid var(--teal);
+  outline-offset: 1px;
+}
+.cal-system-card {
+  background: var(--sheet);
+  color: var(--ink);
+  border-inline-start: 3px solid var(--line);
+}
+.cal-system-card h3,
+.cal-system-card p {
+  color: var(--ink);
+}
+.cal-system-card .muted,
+.cal-system-card .eyebrow {
+  color: var(--ink-soft);
+}
+.cal-cat-national {
+  border-inline-start-color: var(--teal);
+}
+.cal-cat-islamic {
+  border-inline-start-color: var(--ok);
+}
+.cal-cat-season {
+  border-inline-start-color: var(--ink-soft);
+}
+.cal-badge {
+  display: inline-block;
+  margin-inline-end: 0.35rem;
+  padding: 0.05rem 0.45rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1.6;
+}
+.cal-badge-official {
+  color: var(--ok);
+}
+.cal-badge-unannounced {
+  color: var(--ink-soft);
 }
 .product-grid {
   display: grid;

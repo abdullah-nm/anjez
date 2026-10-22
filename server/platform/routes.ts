@@ -10,7 +10,8 @@ import type { LlmProvider, SessionUser } from '../types.ts'
 import { composeDesign, previewTemplate } from './compose.ts'
 import { noteMetric } from '../observability/context.ts'
 import { GeminiImageClient, GeminiTextClient } from './gemini.ts'
-import { occasionByKey, presentOccasion, presentOccasions, reminderOffsets, riyadhYmd, suggestedProducts } from './occasions.ts'
+import { applyCalendarUpdate, isSystemEventId, publicSystemOccasion, syncSystemOccasions } from './calendarSync.ts'
+import { occasionByKey, occasionCatalog, reminderOffsets, riyadhYmd, suggestedProducts } from './occasions.ts'
 import { dispatchDueReminders } from './reminders.ts'
 import { LocalObjectStorage, uploadToSupabase } from './storage.ts'
 import type { PlatformStore } from './store.ts'
@@ -80,11 +81,15 @@ export function registerPlatformRoutes(
   app.get('/api/platform/meta', async (req, res, next) => {
     try {
       const user = await deps.requireUser(req)
+      const calendarSync = syncSystemOccasions(deps.platform)
       dispatchDueReminders(deps.platform)
+      const systemOccasions = deps.platform.listSystemOccasions().map(publicSystemOccasion)
       res.json({
         timezone: 'Asia/Riyadh',
         timezoneNote: 'Event dates are calendar days in Saudi Arabia (UTC+3).',
-        occasions: presentOccasions(),
+        occasions: systemOccasions,
+        systemOccasions,
+        calendarSync,
         reminderOffsets,
         unread: deps.platform.unreadCount(user.companyId, user.id),
         supabaseConfigured: Boolean(deps.config.supabaseUrl && deps.config.supabaseServiceKey),
@@ -190,9 +195,16 @@ export function registerPlatformRoutes(
   app.get('/api/events', async (req, res, next) => {
     try {
       const user = await deps.requireUser(req)
+      const calendarSync = syncSystemOccasions(deps.platform)
       dispatchDueReminders(deps.platform)
-      const events = deps.platform.listEvents(user.companyId)
-      res.json({ events, timezone: 'Asia/Riyadh' })
+      const hidden = new Set(occasionCatalog.map((item) => item.key))
+      const events = deps.platform.listEvents(user.companyId).filter((event) => !event.occasionKey || !hidden.has(event.occasionKey))
+      res.json({
+        events,
+        systemOccasions: deps.platform.listSystemOccasions().map(publicSystemOccasion),
+        calendarSync,
+        timezone: 'Asia/Riyadh',
+      })
     } catch (error) {
       next(error)
     }
@@ -204,6 +216,9 @@ export function registerPlatformRoutes(
       requireRole(user, 'admin')
       const body = eventSchema.parse(req.body ?? {})
       const timing = eventTiming(body)
+      if (body.occasionKey && occasionByKey(body.occasionKey)) {
+        throw new AppError('هذه المناسبة عامة وتظهر تلقائياً في التقويم.', 409, 'SYSTEM_OCCASION')
+      }
       if (body.occasionKey && deps.platform.activeOccasion(user.companyId, body.occasionKey)) {
         throw new AppError('هذه المناسبة مضافة لتقويم الشركة.', 409, 'OCCASION_EXISTS')
       }
@@ -238,6 +253,9 @@ export function registerPlatformRoutes(
     try {
       const user = await deps.requireUser(req)
       requireRole(user, 'admin')
+      if (isSystemEventId(String(req.params.id))) {
+        throw new AppError('مناسبات النظام لا تُعدَّل من حساب الشركة.', 403, 'SYSTEM_OCCASION')
+      }
       const body = eventSchema.parse(req.body ?? {})
       const timing = eventTiming(body)
       const patch = {
@@ -262,34 +280,8 @@ export function registerPlatformRoutes(
       const user = await deps.requireUser(req)
       requireRole(user, 'admin')
       const key = z.object({ key: z.string().trim().min(2).max(80) }).parse(req.body ?? {}).key
-      const template = occasionByKey(key)
-      if (!template) throw new AppError('القالب غير موجود.', 404, 'NOT_FOUND')
-      if (deps.platform.activeOccasion(user.companyId, template.key)) {
-        throw new AppError('هذه المناسبة مضافة لتقويم الشركة.', 409, 'OCCASION_EXISTS')
-      }
-      const presented = presentOccasion(template)
-      const now = new Date().toISOString()
-      const event = {
-        id: newId('evt'),
-        companyId: user.companyId,
-        title: presented.titleAr,
-        date: presented.date,
-        time: null,
-        description: presented.dateNote,
-        category: presented.category,
-        audience: '',
-        status: 'planned' as const,
-        reminderDays: [...reminderOffsets],
-        occasionKey: presented.key,
-        recurring: presented.recurring,
-        dateCertainty: presented.certainty,
-        dateNote: presented.dateNote,
-        createdBy: user.id,
-        createdAt: now,
-        updatedAt: now,
-      }
-      deps.platform.insertEvent(event)
-      res.status(201).json({ event })
+      if (!occasionByKey(key)) throw new AppError('القالب غير موجود.', 404, 'NOT_FOUND')
+      res.status(409).json({ error: 'هذه المناسبة عامة وتظهر تلقائياً في التقويم.', code: 'SYSTEM_OCCASION' })
     } catch (error) {
       next(error)
     }
@@ -299,6 +291,9 @@ export function registerPlatformRoutes(
     try {
       const user = await deps.requireUser(req)
       requireRole(user, 'admin')
+      if (isSystemEventId(String(req.params.id))) {
+        throw new AppError('مناسبات النظام لا تُعدَّل من حساب الشركة.', 403, 'SYSTEM_OCCASION')
+      }
       const body = z.object({
         date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
         dateCertainty: z.enum(['official', 'estimated']),
@@ -337,6 +332,9 @@ export function registerPlatformRoutes(
     try {
       const user = await deps.requireUser(req)
       requireRole(user, 'admin')
+      if (isSystemEventId(String(req.params.id))) {
+        throw new AppError('مناسبات النظام لا تُعدَّل من حساب الشركة.', 403, 'SYSTEM_OCCASION')
+      }
       const ok = deps.platform.deleteEvent(user.companyId, String(req.params.id))
       if (!ok) throw new AppError('المناسبة غير موجودة ضمن شركتك.', 404, 'NOT_FOUND')
       res.json({ ok: true })
@@ -393,9 +391,7 @@ export function registerPlatformRoutes(
       const recent = (composeHits.get(user.id) ?? []).filter((time) => now - time < 10 * 60 * 1000)
       if (recent.length >= 8) throw new AppError('حد التوليد: 8 طلبات كل 10 دقائق.', 429, 'COMPOSE_RATE_LIMIT')
       composeHits.set(user.id, [...recent, now])
-      if (body.eventId && !deps.platform.getEvent(user.companyId, body.eventId)) {
-        throw new AppError('المناسبة غير موجودة ضمن شركتك.', 404, 'NOT_FOUND')
-      }
+      const linkedEvent = sessionEvent(deps.platform, user.companyId, body.eventId)
       const brand = ensureBrand(deps.platform, user)
       const design = await composeDesign({
         platform: deps.platform,
@@ -407,8 +403,8 @@ export function registerPlatformRoutes(
         geminiText,
         geminiImage,
         payload: {
-          eventId: body.eventId ?? null,
-          eventTitle: body.eventTitle,
+          eventId: linkedEvent?.id ?? null,
+          eventTitle: linkedEvent?.title || body.eventTitle,
           productId: body.productId,
           productName: body.productName,
           purpose: body.purpose,
@@ -446,11 +442,26 @@ export function registerPlatformRoutes(
   app.get('/api/notifications', async (req, res, next) => {
     try {
       const user = await deps.requireUser(req)
+      syncSystemOccasions(deps.platform)
       dispatchDueReminders(deps.platform)
       res.json({
         notifications: deps.platform.listNotifications(user.companyId, user.id),
         unread: deps.platform.unreadCount(user.companyId, user.id),
+        reminderDays: deps.platform.reminderPreference(user.companyId, user.id),
       })
+    } catch (error) {
+      next(error)
+    }
+  })
+
+  app.put('/api/notifications/preferences', async (req, res, next) => {
+    try {
+      const user = await deps.requireUser(req)
+      const reminderDays = allowedReminders(z.object({
+        reminderDays: z.array(z.number().int()).max(5),
+      }).parse(req.body ?? {}).reminderDays)
+      deps.platform.setReminderPreference(user.companyId, user.id, reminderDays)
+      res.json({ reminderDays })
     } catch (error) {
       next(error)
     }
@@ -472,11 +483,44 @@ export function registerPlatformRoutes(
       if (!secret) throw new AppError('CRON_SECRET غير مضبوط.', 503, 'CRON_UNCONFIGURED')
       const header = req.get('authorization') || ''
       if (header !== `Bearer ${secret}`) throw new AppError('غير مصرح.', 401, 'CRON_FORBIDDEN')
-      res.json(dispatchDueReminders(deps.platform))
+      const calendarSync = syncSystemOccasions(deps.platform)
+      res.json({ ...dispatchDueReminders(deps.platform), calendarSync })
     } catch (error) {
       next(error)
     }
   })
+
+  app.post('/api/internal/calendar/occasions', (req, res, next) => {
+    try {
+      const secret = deps.config.cronSecret
+      if (!secret) throw new AppError('CRON_SECRET غير مضبوط.', 503, 'CRON_UNCONFIGURED')
+      const header = req.get('authorization') || ''
+      if (header !== `Bearer ${secret}`) throw new AppError('غير مصرح.', 401, 'CRON_FORBIDDEN')
+      const body = z.object({
+        key: z.string().trim().min(2).max(80),
+        date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
+        dateCertainty: z.enum(['official', 'estimated', 'unannounced']),
+        source: z.string().trim().min(3).max(200),
+      }).parse(req.body ?? {})
+      const occasion = applyCalendarUpdate(deps.platform, body)
+      res.json({ occasion: occasion ? publicSystemOccasion(occasion) : null })
+    } catch (error) {
+      next(error)
+    }
+  })
+}
+
+function sessionEvent(platform: PlatformStore, companyId: string, eventId?: string | null) {
+  const id = eventId?.trim() || ''
+  if (!id) return null
+  if (isSystemEventId(id)) {
+    const occasion = platform.getSystemOccasion(id.slice('sys:'.length))
+    if (!occasion) throw new AppError('المناسبة غير موجودة ضمن شركتك.', 404, 'NOT_FOUND')
+    return { id, title: occasion.titleAr }
+  }
+  const event = platform.getEvent(companyId, id)
+  if (!event) throw new AppError('المناسبة غير موجودة ضمن شركتك.', 404, 'NOT_FOUND')
+  return { id: event.id, title: event.title }
 }
 
 function allowedReminders(days: number[]) {

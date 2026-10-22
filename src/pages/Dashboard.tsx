@@ -11,6 +11,8 @@ type LiveEvent = {
   audience: string
   category: string
   reminderDays: number[]
+  scope: 'company' | 'system'
+  dateCertainty?: string
 }
 
 function remaining(ymd: string) {
@@ -44,7 +46,25 @@ export function Dashboard() {
         const eventsPayload = await eventsResponse.json()
         const notesPayload = await notesResponse.json()
         if (cancelled) return
-        setLiveEvents(eventsPayload.events || [])
+        const company = (eventsPayload.events || []).map((event: LiveEvent) => ({ ...event, scope: 'company' as const }))
+        const system = (eventsPayload.systemOccasions || []).filter((event: { date: string | null }) => event.date).map((event: {
+          id: string
+          title?: string
+          titleAr?: string
+          date: string
+          category: string
+          dateCertainty?: string
+        }) => ({
+          id: event.id,
+          title: event.titleAr || event.title || '',
+          date: event.date,
+          audience: '',
+          category: event.category,
+          reminderDays: event.dateCertainty === 'official' ? [30, 14, 7, 3, 1] : [],
+          scope: 'system' as const,
+          dateCertainty: event.dateCertainty,
+        }))
+        setLiveEvents([...company, ...system])
         setUnread(notesPayload.unread || 0)
         setEventsReady(true)
       } catch (error) {
@@ -58,25 +78,27 @@ export function Dashboard() {
     }
   }, [user, loadKey])
 
-  function openStudio(productId: string, eventId: string) {
+  function openStudio(productId: string, event: LiveEvent) {
     const product = productById(productId)
-    if (!product) return
-    const live = liveEvents.find((item) => item.id === eventId)
-    const title = live?.title || ''
+    if (!product || !event.date) return
+    const system = event.scope === 'system'
     setDraft({
       ...draft,
       productId,
-      eventId,
-      eventTitle: title,
+      eventId: system ? '' : event.id,
+      eventTitle: event.title,
       size: product.sizes[0],
-      headline: title,
+      headline: event.title,
       subhead: '',
       body: '',
     })
-    navigate(`/studio?eventId=${eventId}`)
+    navigate(system ? '/studio' : `/studio?eventId=${event.id}`)
   }
 
-  const upcoming = liveEvents.filter((event) => event.date && remaining(event.date) >= -1).slice(0, 6)
+  const upcoming = liveEvents
+    .filter((event) => event.date && remaining(event.date) >= -1)
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)))
+    .slice(0, 6)
 
   if (loading || !eventsReady) return <p>جارٍ التحميل…</p>
 
@@ -117,8 +139,14 @@ export function Dashboard() {
                 <p className="eyebrow">{formatDate(event.date)}</p>
                 <h3>{event.title}</h3>
                 <p>{days >= 0 ? `متبقي ${days} يوم` : 'اليوم أو فات الموعد'}</p>
-                <p className="muted">تذكير قبل {event.reminderDays.join('، ')} يوم · مقترح: {product?.name}</p>
-                <button type="button" className="btn btn-secondary" onClick={() => openStudio(productId, event.id)}>
+                <p className="muted">
+                  {event.scope === 'system' ? 'مناسبة عامة' : 'مناسبة الشركة'}
+                  {event.dateCertainty === 'estimated' ? ' · تقديري' : ''}
+                  {event.dateCertainty === 'unannounced' ? ' · بانتظار الإعلان' : ''}
+                  {event.reminderDays.length ? ` · تذكير قبل ${event.reminderDays.join('، ')} يوم` : ' · بلا تذكير قبل التأكيد'}
+                  {' · مقترح: '}{product?.name}
+                </p>
+                <button type="button" className="btn btn-secondary" onClick={() => openStudio(productId, event)}>
                   صمم لهذه المناسبة
                 </button>
               </article>

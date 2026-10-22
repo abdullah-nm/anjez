@@ -84,6 +84,41 @@ export type OccasionTemplate = {
   category: 'national' | 'islamic' | 'season'
   month?: number
   day?: number
+  hijriMonth?: number
+  hijriDay?: number
   recurring: boolean
   dateNote: string
+}
+
+export type SystemOccasionHistory = {
+  date: string | null
+  cycle: string
+  dateCertainty: DateCertainty
+  source: string
+  checkedAt: string | null
+}
+
+export type SystemOccasionRecord = {
+  key: string
+  titleAr: string
+  titleEn: string
+  category: 'national' | 'islamic' | 'season'
+  date: string | null
+  dateCertainty: DateCertainty
+  dateNote: string
+  source: string
+  cycle: string
+  recurring: boolean
+  checkedAt: string | null
+  syncStatus: 'ok' | 'stale'
+  history: SystemOccasionHistory[]
+  updatedAt: string
+}
+
+export type CalendarSyncState = {
+  status: 'ok' | 'stale'
+  source: string
+  checkedAt: string | null
+  attemptedAt: string | null
+  message: string
 }

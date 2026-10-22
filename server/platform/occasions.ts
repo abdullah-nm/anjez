@@ -38,18 +38,18 @@ export function nextFixedDate(month: number, day: number, today = riyadhYmd()) {
 }
 
 const fixedNote = 'تاريخ ميلادي ثابت ويتكرر كل سنة.'
-const hijriNote = 'مناسبة هجرية. لا يُثبَّت لها تاريخ ميلادي يتكرر. أدخل موعد هذا العام بعد الإعلان، ووضّح إن كان مؤكداً رسمياً أو تقديرياً. يلزم التحقق من الإعلان الرسمي.'
-const seasonNote = 'لا يوجد موعد مضمون كل سنة. يبقى «يُحدَّد لاحقًا» إلى أن تُدخل موعداً. يلزم التحقق من الإعلان الرسمي.'
+const hijriNote = 'مناسبة هجرية. الموعد المتوقع يأتي من تقويم أم القرى ويبقى تقديرياً إلى حين الإعلان الرسمي لرؤية الهلال.'
+const seasonNote = 'لا يوجد موعد مضمون كل سنة. يبقى «بانتظار الإعلان» إلى أن يسجّل مسؤول النظام موعداً بعد الإعلان الرسمي.'
 
 export const occasionCatalog: OccasionTemplate[] = [
   { key: 'founding-day', titleAr: 'يوم التأسيس', titleEn: 'Founding Day', category: 'national', month: 2, day: 22, recurring: true, dateNote: fixedNote },
   { key: 'flag-day', titleAr: 'يوم العلم', titleEn: 'Saudi Flag Day', category: 'national', month: 3, day: 11, recurring: true, dateNote: fixedNote },
   { key: 'national-day', titleAr: 'اليوم الوطني السعودي', titleEn: 'Saudi National Day', category: 'national', month: 9, day: 23, recurring: true, dateNote: fixedNote },
-  { key: 'ramadan', titleAr: 'رمضان', titleEn: 'Ramadan', category: 'islamic', recurring: false, dateNote: hijriNote },
-  { key: 'eid-fitr', titleAr: 'عيد الفطر', titleEn: 'Eid al-Fitr', category: 'islamic', recurring: false, dateNote: hijriNote },
-  { key: 'arafah', titleAr: 'يوم عرفة', titleEn: 'Day of Arafah', category: 'islamic', recurring: false, dateNote: hijriNote },
-  { key: 'eid-adha', titleAr: 'عيد الأضحى', titleEn: 'Eid al-Adha', category: 'islamic', recurring: false, dateNote: hijriNote },
-  { key: 'hajj-season', titleAr: 'موسم الحج', titleEn: 'Hajj season', category: 'islamic', recurring: false, dateNote: hijriNote },
+  { key: 'ramadan', titleAr: 'رمضان', titleEn: 'Ramadan', category: 'islamic', hijriMonth: 9, hijriDay: 1, recurring: false, dateNote: hijriNote },
+  { key: 'eid-fitr', titleAr: 'عيد الفطر', titleEn: 'Eid al-Fitr', category: 'islamic', hijriMonth: 10, hijriDay: 1, recurring: false, dateNote: hijriNote },
+  { key: 'arafah', titleAr: 'يوم عرفة', titleEn: 'Day of Arafah', category: 'islamic', hijriMonth: 12, hijriDay: 9, recurring: false, dateNote: hijriNote },
+  { key: 'eid-adha', titleAr: 'عيد الأضحى', titleEn: 'Eid al-Adha', category: 'islamic', hijriMonth: 12, hijriDay: 10, recurring: false, dateNote: hijriNote },
+  { key: 'hajj-season', titleAr: 'موسم الحج', titleEn: 'Hajj season', category: 'islamic', hijriMonth: 12, hijriDay: 8, recurring: false, dateNote: hijriNote },
   { key: 'riyadh-season', titleAr: 'موسم الرياض', titleEn: 'Riyadh Season', category: 'season', recurring: false, dateNote: seasonNote },
   { key: 'jeddah-season', titleAr: 'موسم جدة', titleEn: 'Jeddah Season', category: 'season', recurring: false, dateNote: seasonNote },
   { key: 'diriyah-season', titleAr: 'موسم الدرعية', titleEn: 'Diriyah Season', category: 'season', recurring: false, dateNote: seasonNote },
