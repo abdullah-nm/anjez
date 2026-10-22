@@ -20,11 +20,13 @@ export type BrandProfile = {
   updatedAt: string
 }
 
+export type DateCertainty = 'official' | 'estimated' | 'unannounced'
+
 export type CompanyEventRecord = {
   id: string
   companyId: string
   title: string
-  date: string
+  date: string | null
   time: string | null
   description: string
   category: string
@@ -33,6 +35,8 @@ export type CompanyEventRecord = {
   reminderDays: number[]
   occasionKey: string | null
   recurring: boolean
+  dateCertainty: DateCertainty
+  dateNote: string
   createdBy: string
   createdAt: string
   updatedAt: string
@@ -77,8 +81,9 @@ export type OccasionTemplate = {
   key: string
   titleAr: string
   titleEn: string
-  category: string
-  date: string
+  category: 'national' | 'islamic' | 'season'
+  month?: number
+  day?: number
   recurring: boolean
   dateNote: string
 }

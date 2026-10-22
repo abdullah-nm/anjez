@@ -58,6 +58,7 @@ export interface KnowledgeStore {
   storedEmbeddingDimension(): Promise<number | null>
   audit(event: AuditEvent): Promise<void>
   purgeExpired(nowIso: string): Promise<number>
+  ping(): Promise<boolean>
   close(): Promise<void>
 }
 
@@ -495,6 +496,15 @@ export class SqliteStore implements KnowledgeStore {
     return expired.length
   }
 
+  async ping() {
+    try {
+      const row = this.db.prepare('SELECT 1 AS ok').get() as { ok?: number } | undefined
+      return row?.ok === 1
+    } catch {
+      return false
+    }
+  }
+
   async close() {
     this.db.close()
   }
@@ -811,6 +821,15 @@ class PostgresStore implements KnowledgeStore {
       })
     }
     return rows.length
+  }
+
+  async ping() {
+    try {
+      const result = await this.pool.query('SELECT 1 AS ok')
+      return Number(result.rows[0]?.ok) === 1
+    } catch {
+      return false
+    }
   }
 
   async close() {

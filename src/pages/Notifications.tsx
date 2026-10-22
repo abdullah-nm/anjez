@@ -40,7 +40,7 @@ export function NotificationsPage() {
           <div>
             <h3>{note.title}</h3>
             <p>{note.body}</p>
-            <p className="muted">{new Date(note.createdAt).toLocaleString('ar-SA')}</p>
+            <p className="muted">{new Date(note.createdAt).toLocaleString('ar-SA', { timeZone: 'Asia/Riyadh' })}</p>
           </div>
           <div className="hero-actions">
             {note.eventId && <Link className="btn btn-primary" to={`/calendar`}>المناسبة</Link>}

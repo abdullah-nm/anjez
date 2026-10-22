@@ -18,6 +18,14 @@ import type { EmbeddingProvider, LlmProvider, SessionUser } from './types.ts'
 import { registerPlatformRoutes } from './platform/routes.ts'
 import { LocalObjectStorage } from './platform/storage.ts'
 import type { PlatformStore } from './platform/store.ts'
+import {
+  attachMetricCompany,
+  freshMetricContext,
+  metricCompany,
+  metricContext,
+  noteMetric,
+} from './observability/context.ts'
+import { featureForRoute, METRIC_WINDOWS, MetricsStore, type MetricsRecorder } from './observability/metrics.ts'
 
 const loginSchema = z.object({
   email: z.string().optional().default(''),
@@ -46,6 +54,7 @@ type Deps = {
   images?: ImageGenerator
   platform: PlatformStore
   storage: LocalObjectStorage
+  metrics?: MetricsRecorder
 }
 
 export function createApp(deps: Deps) {
@@ -64,6 +73,54 @@ export function createApp(deps: Deps) {
   app.use(cors({ origin: true, credentials: true }))
   app.use(express.json({ limit: '1mb' }))
   app.use(cookieParser())
+  const metrics = deps.metrics ?? new MetricsStore(deps.config.platformSqlitePath)
+  app.use((req, res, next) => {
+    const started = process.hrtime.bigint()
+    const ctx = freshMetricContext()
+    metricContext.run(ctx, () => {
+      res.on('finish', () => {
+        try {
+          if (req.path === '/api/observability/summary') return
+          const companyId = metricCompany(req)
+          if (!companyId) return
+          const route = requestRoute(req)
+          const note = (res.locals.metricNote || {}) as {
+            feature?: string
+            retrieveOk?: boolean | null
+            generateOk?: boolean | null
+            indexOk?: boolean | null
+            insufficient?: boolean | null
+            backgroundKind?: string | null
+            errorClass?: string | null
+          }
+          const status = res.statusCode
+          const errorClass = safeErrorClass(note.errorClass) || safeErrorClass(res.locals.errorClass) || classFromStatus(status)
+          metrics.record({
+            companyId,
+            method: req.method,
+            route,
+            feature: note.feature || featureForRoute(req.method, route),
+            status,
+            durationMs: Number((process.hrtime.bigint() - started) / 1_000_000n),
+            errorClass,
+            geminiClass: safeGeminiClass(res.locals.geminiClass) || ctx.geminiClass || null,
+            retrieveOk: note.retrieveOk ?? null,
+            generateOk: note.generateOk ?? null,
+            indexOk: note.indexOk ?? null,
+            insufficient: note.insufficient ?? null,
+            backgroundKind: note.backgroundKind ?? null,
+            promptTokens: ctx.usageSamples > 0 ? ctx.promptTokens : null,
+            outputTokens: ctx.usageSamples > 0 ? ctx.outputTokens : null,
+            usageSamples: ctx.usageSamples,
+            usageMissing: ctx.usageMissing,
+          })
+        } catch (error) {
+          console.error(`metric record skipped: ${error instanceof Error ? error.name : 'error'}`)
+        }
+      })
+      next()
+    })
+  })
 
   registerPlatformRoutes(app, {
     config: deps.config,
@@ -98,6 +155,7 @@ export function createApp(deps: Deps) {
         secure: false,
         maxAge: deps.config.sessionTtlMs,
       })
+      attachMetricCompany(req, result.user.companyId)
       await deps.store.audit({
         actorUserId: result.user.id,
         companyId: result.user.companyId,
@@ -116,6 +174,7 @@ export function createApp(deps: Deps) {
   app.post('/api/logout', async (req, res, next) => {
     try {
       const user = await userFromRequest(deps.store, req, deps.config.sessionSecret)
+      if (user) attachMetricCompany(req, user.companyId)
       res.clearCookie(SESSION_COOKIE)
       if (user) {
         await deps.store.audit({
@@ -137,6 +196,7 @@ export function createApp(deps: Deps) {
   app.get('/api/session', async (req, res, next) => {
     try {
       const user = await userFromRequest(deps.store, req, deps.config.sessionSecret)
+      if (user) attachMetricCompany(req, user.companyId)
       res.json({ user: user ? publicUser(user) : null, rag: providerStatus(deps.config) })
     } catch (error) {
       next(error)
@@ -146,6 +206,7 @@ export function createApp(deps: Deps) {
   app.post('/api/design/generate', async (req, res, next) => {
     try {
       const user = await requireUser(req)
+      noteMetric(res, { feature: 'design.image' })
       const body = designImageSchema.parse(req.body ?? {})
       const now = Date.now()
       const recent = (imageRequests.get(user.id) ?? []).filter((time) => now - time < 10 * 60 * 1000)
@@ -218,6 +279,7 @@ export function createApp(deps: Deps) {
     try {
       const user = await requireUser(req)
       requireRole(user, 'admin')
+      noteMetric(res, { feature: 'knowledge.index' })
       const file = req.file
       if (!file) throw new AppError('لم يُرفق ملف.', 400, 'FILE_REQUIRED')
       if (!isSupportedFilename(file.originalname)) {
@@ -256,6 +318,11 @@ export function createApp(deps: Deps) {
           file.buffer,
         )
       }
+      noteMetric(res, {
+        feature: 'knowledge.index',
+        indexOk: document?.status === 'ready',
+        errorClass: document?.status === 'ready' ? null : document?.errorCode ?? null,
+      })
       await deps.store.audit({
         actorUserId: user.id,
         companyId: user.companyId,
@@ -276,6 +343,7 @@ export function createApp(deps: Deps) {
     try {
       const user = await requireUser(req)
       requireRole(user, 'admin')
+      noteMetric(res, { feature: 'knowledge.index' })
       const documentId = routeParam(req.params.id)
       const current = await deps.store.getDocument(user.companyId, documentId)
       if (!current) throw new AppError('المستند غير موجود ضمن شركتك.', 404, 'NOT_FOUND')
@@ -297,6 +365,11 @@ export function createApp(deps: Deps) {
         buffer,
         config: deps.config,
         documentId: current.id,
+      })
+      noteMetric(res, {
+        feature: 'knowledge.index',
+        indexOk: document?.status === 'ready',
+        errorClass: document?.status === 'ready' ? null : document?.errorCode ?? null,
       })
       await deps.store.audit({
         actorUserId: user.id,
@@ -345,6 +418,7 @@ export function createApp(deps: Deps) {
   app.post('/api/knowledge/ask', async (req, res, next) => {
     try {
       const user = await requireUser(req)
+      noteMetric(res, { feature: 'knowledge.ask' })
       const body = askSchema.parse(req.body ?? {})
 
       let chunks
@@ -357,6 +431,12 @@ export function createApp(deps: Deps) {
           minSimilarity: deps.config.minSimilarity,
         })
       } catch (error) {
+        noteMetric(res, {
+          feature: 'knowledge.ask',
+          retrieveOk: false,
+          generateOk: null,
+          errorClass: error instanceof AppError ? error.code : 'EMBED_FAILED',
+        })
         await deps.store.audit({
           actorUserId: user.id,
           companyId: user.companyId,
@@ -384,7 +464,14 @@ export function createApp(deps: Deps) {
         if (chunks.length === 0) {
           answer = 'لا تتوفر معلومة كافية في معرفة الشركة.'
           insufficient = true
+          noteMetric(res, { feature: 'knowledge.ask', retrieveOk: true, generateOk: null, insufficient: true })
         } else if (error instanceof MissingProviderError) {
+          noteMetric(res, {
+            feature: 'knowledge.ask',
+            retrieveOk: true,
+            generateOk: false,
+            errorClass: error.code,
+          })
           await deps.store.audit({
             actorUserId: user.id,
             companyId: user.companyId,
@@ -409,6 +496,12 @@ export function createApp(deps: Deps) {
         }
       }
 
+      noteMetric(res, {
+        feature: 'knowledge.ask',
+        retrieveOk: true,
+        generateOk: chunks.length > 0 ? true : null,
+        insufficient,
+      })
       await deps.store.audit({
         actorUserId: user.id,
         companyId: user.companyId,
@@ -434,13 +527,61 @@ export function createApp(deps: Deps) {
     }
   })
 
+  app.get('/api/observability/summary', async (req, res, next) => {
+    try {
+      const user = await requireUser(req)
+      if (user.role !== 'admin') {
+        throw new AppError('صلاحية غير كافية لعرض مراقبة النظام.', 403, 'FORBIDDEN')
+      }
+      const rawWindow = req.query.window
+      if (rawWindow !== undefined && typeof rawWindow !== 'string') {
+        throw new AppError('الفترة الزمنية غير مدعومة. استخدم 1h أو 24h أو 7d أو 14d.', 400, 'INVALID_WINDOW')
+      }
+      const parsedWindow = z.enum(METRIC_WINDOWS).safeParse(rawWindow ?? '24h')
+      if (!parsedWindow.success) {
+        throw new AppError('الفترة الزمنية غير مدعومة. استخدم 1h أو 24h أو 7d أو 14d.', 400, 'INVALID_WINDOW')
+      }
+      const knowledgeOk = await deps.store.ping()
+      const platformOk = deps.platform.ping()
+      const metricsOk = metrics.ping()
+      const providers = providerStatus(deps.config)
+      const summary = metrics.summary({ companyId: user.companyId, window: parsedWindow.data })
+      res.json({
+        ...summary,
+        health: {
+          server: { status: 'ok' as const, source: 'هذا الرد صادر من عملية الخادم الحالية.' },
+          gemini: {
+            configured: providers.geminiConfigured,
+            textModel: providers.geminiTextModel,
+            embeddingModel: providers.geminiEmbeddingModel,
+            imageModel: providers.imageModel,
+            embeddingsConfigured: providers.embeddingsConfigured,
+            llmConfigured: providers.llmConfigured,
+            liveProbe: false,
+            source: 'إعداد الخادم فقط. لا يُرسل طلب إلى Gemini عند فتح المراقبة.',
+          },
+          database: {
+            knowledge: knowledgeOk ? 'ok' as const : 'error' as const,
+            platform: platformOk && metricsOk ? 'ok' as const : 'error' as const,
+            vectorBackend: providers.vectorBackend,
+            source: 'SELECT 1 على قاعدة المعرفة وقاعدة المنصة.',
+          },
+        },
+      })
+    } catch (error) {
+      next(error)
+    }
+  })
+
   app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
     void _next
     if (error instanceof z.ZodError) {
+      res.locals.errorClass = 'INVALID_BODY'
       res.status(400).json({ error: 'طلب غير صالح.', code: 'INVALID_BODY' })
       return
     }
     if (error instanceof AppError) {
+      res.locals.errorClass = error.code
       res.status(error.status).json({ error: error.message, code: error.code })
       return
     }
@@ -454,10 +595,38 @@ export function createApp(deps: Deps) {
   async function requireUser(req: express.Request): Promise<SessionUser> {
     const user = await userFromRequest(deps.store, req, deps.config.sessionSecret)
     if (!user) throw new AppError('يلزم تسجيل الدخول.', 401, 'UNAUTHENTICATED')
+    attachMetricCompany(req, user.companyId)
     return user
   }
 
   return app
+}
+
+function requestRoute(req: express.Request) {
+  const pattern = req.route && typeof req.route.path === 'string' ? req.route.path : req.path
+  const path = pattern.startsWith('/') ? pattern : `${req.baseUrl}${pattern}`
+  return path.split('?')[0] || req.path
+}
+
+function classFromStatus(status: number) {
+  if (status < 400) return null
+  if (status === 401) return 'UNAUTHENTICATED'
+  if (status === 403) return 'FORBIDDEN'
+  if (status === 404) return 'NOT_FOUND'
+  if (status === 409) return 'CONFLICT'
+  if (status === 429) return 'RATE_LIMIT'
+  if (status === 503) return 'UNAVAILABLE'
+  if (status >= 500) return 'INTERNAL'
+  return 'INVALID'
+}
+
+function safeErrorClass(value: unknown) {
+  return typeof value === 'string' && /^[A-Z0-9_]{1,48}$/.test(value) ? value : null
+}
+
+function safeGeminiClass(value: unknown) {
+  const allowed = new Set(['quota', 'auth', 'model_not_found', 'unavailable', 'invalid', 'not_configured', 'unknown'])
+  return typeof value === 'string' && allowed.has(value) ? value : null
 }
 
 function routeParam(value: string | string[] | undefined) {

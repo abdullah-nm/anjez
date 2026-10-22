@@ -6,6 +6,7 @@ import { createEmbeddingProvider, createLlmProvider } from './lib/providers.ts'
 import { seedAccounts, seedDocuments } from './seed.ts'
 import { createStore } from './store.ts'
 import { seedPlatformDemo } from './platform/demoSeed.ts'
+import { startReminderSchedule } from './platform/reminders.ts'
 import { LocalObjectStorage } from './platform/storage.ts'
 import { PlatformStore } from './platform/store.ts'
 
@@ -47,6 +48,7 @@ for (const legacyDir of ['company_nebras', join('logos', 'company_nebras')]) {
 }
 const storage = new LocalObjectStorage(config.uploadRoot)
 const app = createApp({ config, store, embeddings, llm, platform, storage })
+startReminderSchedule(platform)
 app.listen(config.port, '127.0.0.1', () => {
   console.log(`Anjz API on http://127.0.0.1:${config.port}`)
 })

@@ -7,7 +7,7 @@ import { useAuth } from '../auth'
 type LiveEvent = {
   id: string
   title: string
-  date: string
+  date: string | null
   audience: string
   category: string
   reminderDays: number[]
@@ -76,7 +76,7 @@ export function Dashboard() {
     navigate(`/studio?eventId=${eventId}`)
   }
 
-  const upcoming = liveEvents.filter((event) => remaining(event.date) >= -1).slice(0, 6)
+  const upcoming = liveEvents.filter((event) => event.date && remaining(event.date) >= -1).slice(0, 6)
 
   if (loading || !eventsReady) return <p>جارٍ التحميل…</p>
 
@@ -108,6 +108,7 @@ export function Dashboard() {
         <div className="event-grid">
           {upcoming.length === 0 && <p className="muted">لا مناسبات قادمة. أضف من التقويم.</p>}
           {upcoming.map((event) => {
+            if (!event.date) return null
             const days = remaining(event.date)
             const productId = event.category === 'national' || event.category === 'islamic' ? 'prd-poster' : 'prd-invite'
             const product = productById(productId)

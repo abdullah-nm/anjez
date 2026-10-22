@@ -57,6 +57,7 @@ export function Layout() {
               </NavLink>
             ))}
             {user && <NavLink className="nav-link" to="/notifications">تنبيهات{unread ? ` (${unread})` : ''}</NavLink>}
+            {user?.role === 'admin' && <NavLink className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'} to="/monitor">المراقبة</NavLink>}
           </nav>
           {user ? (
             <>

@@ -1,5 +1,5 @@
 import { newId } from '../lib/crypto.ts'
-import { addDays, daysUntil, occasionCatalog, riyadhYmd } from './occasions.ts'
+import { addDays, riyadhYmd } from './occasions.ts'
 import type { PlatformStore } from './store.ts'
 
 const DEMO_COMPANIES = [
@@ -29,27 +29,6 @@ export function seedPlatformDemo(platform: PlatformStore) {
     platform.reassignEventCreator(company.id, 'seed', company.adminId)
     if (platform.listEvents(company.id).length > 0) continue
 
-    for (const occasion of occasionCatalog) {
-      if (daysUntil(occasion.date, today) < 0) continue
-      platform.insertEvent({
-        id: newId('evt'),
-        companyId: company.id,
-        title: `[تجريبي] ${occasion.titleAr}`,
-        date: occasion.date,
-        time: null,
-        description: `سجل مناسبات تجريبي. ${occasion.dateNote}`,
-        category: occasion.category,
-        audience: 'فريق الشركة',
-        status: 'planned',
-        reminderDays: [14, 7, 1],
-        occasionKey: `demo:${occasion.key}`,
-        recurring: occasion.recurring,
-        createdBy: company.adminId,
-        createdAt: now,
-        updatedAt: now,
-      })
-    }
-
     platform.insertEvent({
       id: newId('evt'),
       companyId: company.id,
@@ -64,6 +43,8 @@ export function seedPlatformDemo(platform: PlatformStore) {
       reminderDays: [7, 1],
       occasionKey: 'demo:seed',
       recurring: false,
+      dateCertainty: 'official',
+      dateNote: 'موعد تجريبي داخل الشركة، وليس مناسبة رسمية.',
       createdBy: company.adminId,
       createdAt: now,
       updatedAt: now,

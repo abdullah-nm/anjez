@@ -8,12 +8,13 @@ import { AppError } from '../lib/errors.ts'
 import type { ImageGenerator } from '../lib/imageGeneration.ts'
 import type { LlmProvider, SessionUser } from '../types.ts'
 import { composeDesign, previewTemplate } from './compose.ts'
+import { noteMetric } from '../observability/context.ts'
 import { GeminiImageClient, GeminiTextClient } from './gemini.ts'
-import { occasionCatalog, reminderOffsets, suggestedProducts } from './occasions.ts'
+import { occasionByKey, presentOccasion, presentOccasions, reminderOffsets, riyadhYmd, suggestedProducts } from './occasions.ts'
 import { dispatchDueReminders } from './reminders.ts'
 import { LocalObjectStorage, uploadToSupabase } from './storage.ts'
 import type { PlatformStore } from './store.ts'
-import type { BrandProfile } from './types.ts'
+import type { BrandProfile, DateCertainty } from './types.ts'
 
 const brandSchema = z.object({
   companyName: z.string().trim().min(2).max(80),
@@ -32,15 +33,17 @@ const brandSchema = z.object({
 
 const eventSchema = z.object({
   title: z.string().trim().min(2).max(120),
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
   time: z.string().regex(/^\d{2}:\d{2}$/).nullable().optional(),
   description: z.string().trim().max(1000).default(''),
   category: z.string().trim().min(2).max(40),
   audience: z.string().trim().max(200).default(''),
   status: z.enum(['planned', 'confirmed', 'done']).default('planned'),
-  reminderDays: z.array(z.number().int()).default([7, 1]),
-  occasionKey: z.string().nullable().optional(),
+  reminderDays: z.array(z.number().int()).default([30, 14, 7, 3, 1]),
+  occasionKey: z.string().trim().max(80).nullable().optional(),
   recurring: z.boolean().default(false),
+  dateCertainty: z.enum(['official', 'estimated', 'unannounced']).optional(),
+  dateNote: z.string().trim().max(400).default(''),
 })
 
 const composeSchema = z.object({
@@ -81,7 +84,7 @@ export function registerPlatformRoutes(
       res.json({
         timezone: 'Asia/Riyadh',
         timezoneNote: 'Event dates are calendar days in Saudi Arabia (UTC+3).',
-        occasions: occasionCatalog,
+        occasions: presentOccasions(),
         reminderOffsets,
         unread: deps.platform.unreadCount(user.companyId, user.id),
         supabaseConfigured: Boolean(deps.config.supabaseUrl && deps.config.supabaseServiceKey),
@@ -200,22 +203,26 @@ export function registerPlatformRoutes(
       const user = await deps.requireUser(req)
       requireRole(user, 'admin')
       const body = eventSchema.parse(req.body ?? {})
+      const timing = eventTiming(body)
+      if (body.occasionKey && deps.platform.activeOccasion(user.companyId, body.occasionKey)) {
+        throw new AppError('هذه المناسبة مضافة لتقويم الشركة.', 409, 'OCCASION_EXISTS')
+      }
       const now = new Date().toISOString()
       const event = {
         id: newId('evt'),
         companyId: user.companyId,
         title: body.title,
-        date: body.date,
+        date: timing.date,
         time: body.time ?? null,
         description: body.description,
         category: body.category,
         audience: body.audience,
         status: body.status,
-        reminderDays: body.reminderDays.filter((day) =>
-          (reminderOffsets as readonly number[]).includes(day),
-        ),
+        reminderDays: allowedReminders(body.reminderDays),
         occasionKey: body.occasionKey ?? null,
         recurring: body.recurring,
+        dateCertainty: timing.dateCertainty,
+        dateNote: timing.dateNote,
         createdBy: user.id,
         createdAt: now,
         updatedAt: now,
@@ -232,13 +239,95 @@ export function registerPlatformRoutes(
       const user = await deps.requireUser(req)
       requireRole(user, 'admin')
       const body = eventSchema.parse(req.body ?? {})
-      const event = deps.platform.updateEvent(user.companyId, String(req.params.id), {
+      const timing = eventTiming(body)
+      const patch = {
         ...body,
+        date: timing.date,
         time: body.time ?? null,
-        reminderDays: body.reminderDays,
-      })
+        reminderDays: allowedReminders(body.reminderDays),
+        dateCertainty: timing.dateCertainty,
+        dateNote: timing.dateNote,
+      }
+      if (patch.occasionKey === undefined) delete patch.occasionKey
+      const event = deps.platform.updateEvent(user.companyId, String(req.params.id), patch)
       if (!event) throw new AppError('المناسبة غير موجودة ضمن شركتك.', 404, 'NOT_FOUND')
       res.json({ event })
+    } catch (error) {
+      next(error)
+    }
+  })
+
+  app.post('/api/events/from-occasion', async (req, res, next) => {
+    try {
+      const user = await deps.requireUser(req)
+      requireRole(user, 'admin')
+      const key = z.object({ key: z.string().trim().min(2).max(80) }).parse(req.body ?? {}).key
+      const template = occasionByKey(key)
+      if (!template) throw new AppError('القالب غير موجود.', 404, 'NOT_FOUND')
+      if (deps.platform.activeOccasion(user.companyId, template.key)) {
+        throw new AppError('هذه المناسبة مضافة لتقويم الشركة.', 409, 'OCCASION_EXISTS')
+      }
+      const presented = presentOccasion(template)
+      const now = new Date().toISOString()
+      const event = {
+        id: newId('evt'),
+        companyId: user.companyId,
+        title: presented.titleAr,
+        date: presented.date,
+        time: null,
+        description: presented.dateNote,
+        category: presented.category,
+        audience: '',
+        status: 'planned' as const,
+        reminderDays: [...reminderOffsets],
+        occasionKey: presented.key,
+        recurring: presented.recurring,
+        dateCertainty: presented.certainty,
+        dateNote: presented.dateNote,
+        createdBy: user.id,
+        createdAt: now,
+        updatedAt: now,
+      }
+      deps.platform.insertEvent(event)
+      res.status(201).json({ event })
+    } catch (error) {
+      next(error)
+    }
+  })
+
+  app.post('/api/events/:id/annual-date', async (req, res, next) => {
+    try {
+      const user = await deps.requireUser(req)
+      requireRole(user, 'admin')
+      const body = z.object({
+        date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+        dateCertainty: z.enum(['official', 'estimated']),
+      }).parse(req.body ?? {})
+      const current = deps.platform.getEvent(user.companyId, String(req.params.id))
+      if (!current) throw new AppError('المناسبة غير موجودة ضمن شركتك.', 404, 'NOT_FOUND')
+      if (current.recurring) throw new AppError('هذا الموعد الميلادي يتجدد تلقائياً كل سنة.', 400, 'FIXED_DATE')
+      const today = riyadhYmd()
+      if (current.date && current.date < today) {
+        deps.platform.updateEvent(user.companyId, current.id, { status: 'done' })
+        const now = new Date().toISOString()
+        const created = {
+          ...current,
+          id: newId('evt'),
+          date: body.date,
+          dateCertainty: body.dateCertainty,
+          status: 'planned' as const,
+          createdAt: now,
+          updatedAt: now,
+        }
+        deps.platform.insertEvent(created)
+        res.status(201).json({ event: created, previousId: current.id })
+        return
+      }
+      const event = deps.platform.updateEvent(user.companyId, current.id, {
+        date: body.date,
+        dateCertainty: body.dateCertainty,
+      })
+      res.json({ event, previousId: null })
     } catch (error) {
       next(error)
     }
@@ -289,6 +378,7 @@ export function registerPlatformRoutes(
         dimensions: body.dimensions,
         size: body.size,
       })
+      noteMetric(res, { feature: 'design.preview' })
       res.json({ svg })
     } catch (error) {
       next(error)
@@ -330,6 +420,10 @@ export function registerPlatformRoutes(
           instructions: body.instructions,
           content: body.content,
         },
+      })
+      noteMetric(res, {
+        feature: 'design.compose',
+        backgroundKind: design.backgroundKind,
       })
       res.status(201).json({ design, suggestions: suggestedProducts(body.purpose || 'custom') })
     } catch (error) {
@@ -383,6 +477,20 @@ export function registerPlatformRoutes(
       next(error)
     }
   })
+}
+
+function allowedReminders(days: number[]) {
+  return days.filter((day) => (reminderOffsets as readonly number[]).includes(day))
+}
+
+function eventTiming(body: { date?: string | null, dateCertainty?: DateCertainty, dateNote?: string }) {
+  const date = body.date ?? null
+  let dateCertainty: DateCertainty = body.dateCertainty ?? (date ? 'official' : 'unannounced')
+  if (!date) dateCertainty = 'unannounced'
+  if (date && dateCertainty === 'unannounced') {
+    throw new AppError('حدّد التاريخ، أو اترك المناسبة بلا موعد.', 400, 'DATE_REQUIRED')
+  }
+  return { date, dateCertainty, dateNote: body.dateNote ?? '' }
 }
 
 function ensureBrand(platform: PlatformStore, user: SessionUser): BrandProfile {

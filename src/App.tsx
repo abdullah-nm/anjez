@@ -6,6 +6,7 @@ import { Confirmation } from './pages/Confirmation'
 import { Dashboard } from './pages/Dashboard'
 import { CalendarPage } from './pages/Calendar'
 import { Knowledge } from './pages/Knowledge'
+import { Monitor } from './pages/Monitor'
 import { Login } from './pages/Login'
 import { NotificationsPage } from './pages/Notifications'
 import { Order } from './pages/Order'
@@ -39,6 +40,7 @@ export default function App() {
                 <Route path="/knowledge" element={<Knowledge />} />
                 <Route path="/calendar" element={<CalendarPage />} />
                 <Route path="/notifications" element={<NotificationsPage />} />
+                <Route path="/monitor" element={<Monitor />} />
               </Route>
               <Route path="*" element={<Navigate to="/" replace />} />
             </Route>

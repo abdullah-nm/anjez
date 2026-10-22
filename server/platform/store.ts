@@ -45,20 +45,25 @@ export class PlatformStore {
         id TEXT PRIMARY KEY,
         company_id TEXT NOT NULL,
         title TEXT NOT NULL,
-        date TEXT NOT NULL,
+        date TEXT,
         time TEXT,
         description TEXT NOT NULL DEFAULT '',
         category TEXT NOT NULL,
         audience TEXT NOT NULL DEFAULT '',
         status TEXT NOT NULL DEFAULT 'planned',
-        reminder_days TEXT NOT NULL DEFAULT '[7,1]',
+        reminder_days TEXT NOT NULL DEFAULT '[30,14,7,3,1]',
         occasion_key TEXT,
         recurring INTEGER NOT NULL DEFAULT 0,
+        date_certainty TEXT NOT NULL DEFAULT 'official',
+        date_note TEXT NOT NULL DEFAULT '',
         created_by TEXT NOT NULL,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_events_company_date ON company_events(company_id, date);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_events_open_occasion
+        ON company_events(company_id, occasion_key)
+        WHERE occasion_key IS NOT NULL AND status != 'done';
       CREATE TABLE IF NOT EXISTS designs (
         id TEXT PRIMARY KEY,
         company_id TEXT NOT NULL,
@@ -94,6 +99,9 @@ export class PlatformStore {
         created_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_notes_user ON notifications(company_id, user_id, created_at);
+    `)
+    this.migrateEvents()
+    this.db.exec(`
       CREATE TABLE IF NOT EXISTS reminder_deliveries (
         id TEXT PRIMARY KEY,
         company_id TEXT NOT NULL,
@@ -145,9 +153,18 @@ export class PlatformStore {
 
   listEvents(companyId: string) {
     const rows = this.db.prepare(
-      'SELECT * FROM company_events WHERE company_id = ? ORDER BY date ASC',
+      'SELECT * FROM company_events WHERE company_id = ? ORDER BY date IS NULL, date ASC',
     ).all(requireCompany(companyId)) as Record<string, unknown>[]
     return rows.map(mapEvent)
+  }
+
+  activeOccasion(companyId: string, occasionKey: string) {
+    const row = this.db.prepare(
+      `SELECT * FROM company_events
+       WHERE company_id = ? AND occasion_key = ? AND status != 'done'
+       LIMIT 1`,
+    ).get(requireCompany(companyId), occasionKey) as Record<string, unknown> | undefined
+    return row ? mapEvent(row) : null
   }
 
   getEvent(companyId: string, id: string) {
@@ -162,8 +179,8 @@ export class PlatformStore {
     this.db.prepare(
       `INSERT INTO company_events (
         id, company_id, title, date, time, description, category, audience, status,
-        reminder_days, occasion_key, recurring, created_by, created_at, updated_at
-      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        reminder_days, occasion_key, recurring, date_certainty, date_note, created_by, created_at, updated_at
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     ).run(
       event.id,
       event.companyId,
@@ -177,6 +194,8 @@ export class PlatformStore {
       JSON.stringify(event.reminderDays),
       event.occasionKey,
       event.recurring ? 1 : 0,
+      event.dateCertainty,
+      event.dateNote,
       event.createdBy,
       event.createdAt,
       event.updatedAt,
@@ -189,7 +208,7 @@ export class PlatformStore {
     const next = { ...current, ...patch, updatedAt: new Date().toISOString() }
     this.db.prepare(
       `UPDATE company_events SET title=?, date=?, time=?, description=?, category=?, audience=?, status=?,
-       reminder_days=?, occasion_key=?, recurring=?, updated_at=?
+       reminder_days=?, occasion_key=?, recurring=?, date_certainty=?, date_note=?, updated_at=?
        WHERE id=? AND company_id=?`,
     ).run(
       next.title,
@@ -202,6 +221,8 @@ export class PlatformStore {
       JSON.stringify(next.reminderDays),
       next.occasionKey,
       next.recurring ? 1 : 0,
+      next.dateCertainty,
+      next.dateNote,
       next.updatedAt,
       id,
       companyId,
@@ -294,7 +315,60 @@ export class PlatformStore {
   }
 
   dueEvents() {
-    return (this.db.prepare('SELECT * FROM company_events').all() as Record<string, unknown>[]).map(mapEvent)
+    return (this.db.prepare(
+      `SELECT * FROM company_events WHERE date IS NOT NULL AND status != 'done'`,
+    ).all() as Record<string, unknown>[]).map(mapEvent)
+  }
+
+  private migrateEvents() {
+    const info = this.db.prepare('PRAGMA table_info(company_events)').all() as { name: string, notnull: number }[]
+    if (!info.length) return
+    const date = info.find((column) => column.name === 'date')
+    const ready = date?.notnull === 0 && info.some((column) => column.name === 'date_certainty')
+    if (ready) {
+      this.db.exec(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_events_open_occasion
+          ON company_events(company_id, occasion_key)
+          WHERE occasion_key IS NOT NULL AND status != 'done';
+      `)
+      return
+    }
+    this.db.exec('BEGIN')
+    this.db.exec(`
+      CREATE TABLE company_events_next (
+        id TEXT PRIMARY KEY,
+        company_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        date TEXT,
+        time TEXT,
+        description TEXT NOT NULL DEFAULT '',
+        category TEXT NOT NULL,
+        audience TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'planned',
+        reminder_days TEXT NOT NULL DEFAULT '[30,14,7,3,1]',
+        occasion_key TEXT,
+        recurring INTEGER NOT NULL DEFAULT 0,
+        date_certainty TEXT NOT NULL DEFAULT 'official',
+        date_note TEXT NOT NULL DEFAULT '',
+        created_by TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      INSERT INTO company_events_next (
+        id, company_id, title, date, time, description, category, audience, status,
+        reminder_days, occasion_key, recurring, date_certainty, date_note, created_by, created_at, updated_at
+      )
+      SELECT id, company_id, title, NULLIF(date, ''), time, description, category, audience, status,
+        reminder_days, occasion_key, recurring, 'official', '', created_by, created_at, updated_at
+      FROM company_events;
+      DROP TABLE company_events;
+      ALTER TABLE company_events_next RENAME TO company_events;
+      CREATE INDEX IF NOT EXISTS idx_events_company_date ON company_events(company_id, date);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_events_open_occasion
+        ON company_events(company_id, occasion_key)
+        WHERE occasion_key IS NOT NULL AND status != 'done';
+    `)
+    this.db.exec('COMMIT')
   }
 
   purgeCompany(companyId: string, userIds: string[]) {
@@ -335,6 +409,15 @@ export class PlatformStore {
     }
   }
 
+  ping() {
+    try {
+      const row = this.db.prepare('SELECT 1 AS ok').get() as { ok?: number } | undefined
+      return row?.ok === 1
+    } catch {
+      return false
+    }
+  }
+
   close() {
     this.db.close()
   }
@@ -366,14 +449,16 @@ function mapEvent(row: Record<string, unknown>): CompanyEventRecord {
     id: String(row.id),
     companyId: String(row.company_id),
     title: String(row.title),
-    date: String(row.date),
+    date: row.date ? String(row.date) : null,
     time: row.time ? String(row.time) : null,
     description: String(row.description),
     category: String(row.category),
     audience: String(row.audience),
     status: row.status as CompanyEventRecord['status'],
-    reminderDays: JSON.parse(String(row.reminder_days || '[7,1]')) as number[],
+    reminderDays: JSON.parse(String(row.reminder_days || '[30,14,7,3,1]')) as number[],
     occasionKey: row.occasion_key ? String(row.occasion_key) : null,
+    dateCertainty: row.date_certainty === 'estimated' || row.date_certainty === 'unannounced' ? row.date_certainty : 'official',
+    dateNote: row.date_note ? String(row.date_note) : '',
     recurring: Boolean(row.recurring),
     createdBy: String(row.created_by),
     createdAt: String(row.created_at),

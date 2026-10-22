@@ -996,6 +996,12 @@ legend {
   border-radius: 0.35rem;
   cursor: pointer;
 }
+.cal-estimated {
+  background: #9a6b12;
+}
+.cal-unannounced {
+  background: var(--ink-soft);
+}
 .product-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
@@ -1120,5 +1126,82 @@ legend {
     z-index: 3;
     padding: 0.7rem 0 0.2rem;
     background: linear-gradient(180deg, transparent, var(--paper) 28%);
+  }
+}
+
+.monitor-windows {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.monitor-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+
+.monitor-card {
+  padding: 1rem 1.1rem;
+}
+
+.monitor-card h2 {
+  margin: 0 0 0.4rem;
+  font-size: 1rem;
+}
+
+.monitor-value {
+  margin: 0.2rem 0;
+  font-size: 1.6rem;
+  font-weight: 700;
+}
+
+.monitor-list {
+  margin: 0;
+  padding-inline-start: 1.1rem;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.monitor-compare {
+  display: grid;
+  gap: 0.7rem;
+  margin: 0.8rem 0;
+}
+
+.monitor-bar {
+  display: block;
+  height: 0.45rem;
+  margin-top: 0.3rem;
+  border-radius: 999px;
+  background: var(--gold-deep);
+  min-width: 0.4rem;
+}
+
+.monitor-bar-past {
+  background: #9db4d8;
+}
+
+.monitor-table-wrap {
+  overflow-x: auto;
+}
+
+.monitor-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.92rem;
+}
+
+.monitor-table th,
+.monitor-table td {
+  text-align: start;
+  padding: 0.45rem 0.35rem;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+
+@media (max-width: 800px) {
+  .monitor-grid {
+    grid-template-columns: 1fr;
   }
 }

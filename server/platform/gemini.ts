@@ -1,5 +1,6 @@
 import type { EmbeddingProvider, LlmProvider } from '../types.ts'
 import { MissingProviderError } from '../lib/errors.ts'
+import { noteGeminiFailure, noteGeminiUsage } from '../observability/context.ts'
 
 const GEMINI_ROOT = 'https://generativelanguage.googleapis.com/v1beta'
 const TEXT_FALLBACKS = ['gemini-3.8-flash', 'gemini-flash-latest', 'gemini-2.5-flash']
@@ -66,14 +67,18 @@ async function geminiPost(
   })
   const raw = await response.text()
   if (!response.ok) {
+    noteGeminiFailure(response.status, 'http')
     const error = new MissingProviderError(code, `فشل Gemini (${response.status}). ${sanitizeGeminiDetail(raw)}`)
     ;(error as MissingProviderError & { status?: number; raw?: string }).status = response.status
     ;(error as MissingProviderError & { raw?: string }).raw = raw
     throw error
   }
   try {
-    return JSON.parse(raw) as Record<string, unknown>
+    const payload = JSON.parse(raw) as Record<string, unknown>
+    noteGeminiUsage(payload)
+    return payload
   } catch {
+    noteGeminiFailure(undefined, 'bad_response')
     throw new MissingProviderError(code, 'رد Gemini ليس JSON صالحاً.')
   }
 }
@@ -147,6 +152,7 @@ export class GeminiTextClient {
 
   async generateJson(prompt: string) {
     if (!this.apiKey) {
+      noteGeminiFailure(undefined, 'unconfigured')
       throw new MissingProviderError(
         'LLM_UNAVAILABLE',
         'مزود Gemini غير مضبوط. ضع GEMINI_API_KEY في الخادم.',
@@ -179,6 +185,7 @@ export class GeminiLlm implements LlmProvider {
 
   async complete(input: { system: string; user: string }) {
     if (!this.options.apiKey) {
+      noteGeminiFailure(undefined, 'unconfigured')
       throw new MissingProviderError(
         'LLM_UNAVAILABLE',
         'مزود Gemini غير مضبوط. ضع GEMINI_API_KEY في الخادم.',
@@ -217,6 +224,7 @@ export class GeminiEmbeddings implements EmbeddingProvider {
 
   async embed(texts: string[]): Promise<number[][]> {
     if (!this.options.apiKey) {
+      noteGeminiFailure(undefined, 'unconfigured')
       throw new MissingProviderError(
         'EMBEDDINGS_UNAVAILABLE',
         'مزود التضمين غير مضبوط. ضع GEMINI_API_KEY أو EMBEDDING_API_KEY ثم أعد الفهرسة.',
@@ -295,6 +303,7 @@ export class GeminiImageClient {
     referenceImage?: { mimeType: string; data: string } | null,
   ) {
     if (!this.apiKey) {
+      noteGeminiFailure(undefined, 'unconfigured')
       throw new MissingProviderError(
         'IMAGE_GENERATION_UNAVAILABLE',
         'توليد الصور عبر Gemini غير مضبوط.',
