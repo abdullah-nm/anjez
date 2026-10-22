@@ -3,6 +3,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react'
@@ -44,22 +45,33 @@ interface AppStore {
 
 const StoreContext = createContext<AppStore | null>(null)
 
+function brandFromSession(user: { name: string; email: string; companyName: string }, stored: Partial<CompanyBrand> = {}): CompanyBrand {
+  return {
+    ...defaultBrand,
+    ...stored,
+    companyName: user.companyName,
+    contactName: user.name,
+    email: user.email,
+    phone: stored.phone || '',
+    city: stored.city || '',
+    slogan: stored.slogan || '',
+  }
+}
+
 export function StoreProvider({ children }: { children: ReactNode }) {
-  const { user } = useAuth()
+  const { user, loading } = useAuth()
+  const seenUser = useRef(false)
   const [brand, setBrand] = useState<CompanyBrand>(() => {
     const stored = readJson<Partial<CompanyBrand>>(BRAND_KEY, {})
     return {
+      ...defaultBrand,
+      ...stored,
       companyName: stored.companyName || '',
-      industry: stored.industry || '',
       contactName: stored.contactName || '',
       email: stored.email || '',
       phone: stored.phone || '',
       city: stored.city || '',
-      primaryColor: stored.primaryColor || '#142433',
-      accentColor: stored.accentColor || '#c4a46a',
       slogan: stored.slogan || '',
-      tone: stored.tone || 'فاخر',
-      logoUrl: stored.logoUrl,
     }
   })
   const [draft, setDraftState] = useState<DesignDraft>(() => {
@@ -67,7 +79,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     return {
       ...initialDraft,
       ...stored,
-      headline: stored.headline === defaultBrand.companyName ? '' : stored.headline || '',
+      headline: stored.headline || '',
       subhead: '',
       body: '',
     }
@@ -77,7 +89,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   )
 
   useEffect(() => {
+    if (user) seenUser.current = true
+    if (loading || user || !seenUser.current) return
+    setBrand({ ...defaultBrand })
+    setDraftState(initialDraft)
+    setOrders([])
+    seenUser.current = false
+  }, [user, loading])
+
+  useEffect(() => {
     if (!user) return
+    setBrand((current) => brandFromSession(user, current))
     void (async () => {
       const response = await fetch('/api/brand', { credentials: 'include' })
       if (!response.ok) return
@@ -85,10 +107,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (!payload?.brand) return
       const logoUrl = payload.brand.logoPath ? await fetchBrandLogoObjectUrl() : null
       const next: CompanyBrand = {
-        companyName: payload.brand.companyName,
+        companyName: payload.brand.companyName || user.companyName,
         industry: payload.brand.industry,
-        contactName: payload.brand.contactName,
-        email: payload.brand.email,
+        contactName: payload.brand.contactName || user.name,
+        email: payload.brand.email || user.email,
         phone: payload.brand.phone,
         city: payload.brand.city,
         primaryColor: payload.brand.primaryColor,

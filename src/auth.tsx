@@ -81,6 +81,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(async () => {
     await fetch('/api/logout', { method: 'POST', credentials: 'include' })
+    localStorage.removeItem('anjz-brand')
+    localStorage.removeItem('anjz-draft')
+    localStorage.removeItem('anjz-orders')
     setUser(null)
   }, [])
 

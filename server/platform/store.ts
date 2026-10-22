@@ -33,8 +33,8 @@ export class PlatformStore {
         email TEXT NOT NULL DEFAULT '',
         phone TEXT NOT NULL DEFAULT '',
         city TEXT NOT NULL DEFAULT '',
-        primary_color TEXT NOT NULL DEFAULT '#142433',
-        accent_color TEXT NOT NULL DEFAULT '#c4a46a',
+        primary_color TEXT NOT NULL DEFAULT '#1f2937',
+        accent_color TEXT NOT NULL DEFAULT '#d1d5db',
         slogan TEXT NOT NULL DEFAULT '',
         tone TEXT NOT NULL DEFAULT 'فاخر',
         logo_path TEXT,
@@ -297,9 +297,20 @@ export class PlatformStore {
     return (this.db.prepare('SELECT * FROM company_events').all() as Record<string, unknown>[]).map(mapEvent)
   }
 
+  purgeCompany(companyId: string, userIds: string[]) {
+    this.db.prepare('DELETE FROM reminder_deliveries WHERE company_id = ?').run(companyId)
+    this.db.prepare('DELETE FROM designs WHERE company_id = ?').run(companyId)
+    this.db.prepare('DELETE FROM company_events WHERE company_id = ?').run(companyId)
+    this.db.prepare('DELETE FROM brand_profiles WHERE company_id = ?').run(companyId)
+    this.db.prepare('DELETE FROM notifications WHERE company_id = ?').run(companyId)
+    for (const userId of userIds) {
+      this.db.prepare('DELETE FROM notifications WHERE user_id = ?').run(userId)
+    }
+  }
+
   companyUserIds(companyId: string, fallbackUserId: string) {
     const known: Record<string, string[]> = {
-      company_nebras: ['user_sara', 'user_lina'],
+      company_almarai: ['user_almarai_admin', 'user_almarai_member'],
       company_qimam: ['user_fahd'],
     }
     const ids = new Set<string>([fallbackUserId, ...(known[companyId] ?? [])])

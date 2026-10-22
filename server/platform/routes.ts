@@ -53,6 +53,7 @@ const composeSchema = z.object({
   language: z.enum(['ar', 'en']).default('ar'),
   style: z.string().trim().max(80).default(''),
   dimensions: z.string().trim().max(40).default('square'),
+  size: z.string().trim().max(40).default(''),
   instructions: z.string().trim().max(600).default(''),
   content: z.string().trim().max(800).default(''),
 })
@@ -274,6 +275,7 @@ export function registerPlatformRoutes(
         subhead: z.string().trim().max(200).default(''),
         body: z.string().trim().max(400).default(''),
         dimensions: z.string().trim().max(40).default('square'),
+        size: z.string().trim().max(40).default(''),
       }).parse(req.body ?? {})
       const brand = ensureBrand(deps.platform, user)
       const logo = deps.storage.readCompanyLogo(user.companyId, brand.logoPath, brand.logoMime)
@@ -285,6 +287,7 @@ export function registerPlatformRoutes(
         subhead: body.subhead,
         body: body.body,
         dimensions: body.dimensions,
+        size: body.size,
       })
       res.json({ svg })
     } catch (error) {
@@ -323,6 +326,7 @@ export function registerPlatformRoutes(
           language: body.language,
           style: body.style,
           dimensions: body.dimensions,
+          size: body.size,
           instructions: body.instructions,
           content: body.content,
         },
@@ -394,8 +398,8 @@ function ensureBrand(platform: PlatformStore, user: SessionUser): BrandProfile {
     email: user.email,
     phone: '',
     city: '',
-    primaryColor: '#142433',
-    accentColor: '#c4a46a',
+    primaryColor: '#1f2937',
+    accentColor: '#d1d5db',
     slogan: '',
     tone: 'فاخر',
     logoPath: null,

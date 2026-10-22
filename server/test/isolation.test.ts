@@ -50,15 +50,15 @@ async function boot(images?: ImageGenerator) {
   await seedAccounts(store)
   const embeddings = new HashingEmbeddingProvider()
   const llm = new ScriptedLlm()
-  const sara = (await store.getUserById('user_sara')) as SessionUser
+  const sara = (await store.getUserById('user_almarai_admin')) as SessionUser
   const fahd = (await store.getUserById('user_fahd')) as SessionUser
   const nebrasDoc = await ingestBuffer({
     store,
     embeddings,
     user: sara,
-    filename: 'nebras-print-policy.md',
+    filename: 'almarai-print-policy.md',
     mimeType: 'text/markdown',
-    buffer: readFileSync(join(fixtures, 'nebras-print-policy.md')),
+    buffer: readFileSync(join(fixtures, 'almarai-print-policy.md')),
     config,
   })
   const qimamDoc = await ingestBuffer({
@@ -74,8 +74,8 @@ async function boot(images?: ImageGenerator) {
     config.uploadRoot,
     sara.companyId,
     nebrasDoc!.id,
-    'nebras-print-policy.md',
-    readFileSync(join(fixtures, 'nebras-print-policy.md')),
+    'almarai-print-policy.md',
+    readFileSync(join(fixtures, 'almarai-print-policy.md')),
   )
   saveOriginal(
     config.uploadRoot,
@@ -109,7 +109,7 @@ describe('company-isolated RAG', () => {
     const { app, store } = await boot()
     cleanups.push(() => store.close())
 
-    const nebrasCookie = await login(app, 'sara@nebras.sa')
+    const nebrasCookie = await login(app, 'nasser@almarai.com')
     const qimamCookie = await login(app, 'fahd@qimam.sa')
 
     const nebrasAsk = await request(app)
@@ -128,30 +128,30 @@ describe('company-isolated RAG', () => {
     const nebrasOwn = await request(app)
       .post('/api/knowledge/ask')
       .set('Cookie', nebrasCookie)
-      .send({ question: 'ما رمز المعرفة الداخلي لنبراس وخصم الطباعة؟' })
+      .send({ question: 'ما رمز المعرفة الداخلي للمراعي وخصم الطباعة؟' })
       .expect(200)
 
-    expect(nebrasOwn.body.sources.some((row: { filename: string }) => row.filename.includes('nebras'))).toBe(true)
+    expect(nebrasOwn.body.sources.some((row: { filename: string }) => row.filename.includes('almarai'))).toBe(true)
     expect(JSON.stringify(nebrasOwn.body.sources)).not.toContain('qimam-print-policy.md')
-    expect(JSON.stringify(nebrasOwn.body)).toContain('NEBRAS_SECRET_CODE_ALPHA')
+    expect(JSON.stringify(nebrasOwn.body)).toContain('ALMARAI_SECRET_CODE_ALPHA')
 
     const qimamAsk = await request(app)
       .post('/api/knowledge/ask')
       .set('Cookie', qimamCookie)
       .send({
-        question: 'ما هو NEBRAS_SECRET_CODE_ALPHA وخصم نبراس؟',
-        companyId: 'company_nebras',
+        question: 'ما هو ALMARAI_SECRET_CODE_ALPHA وخصم المراعي؟',
+        companyId: 'company_almarai',
       })
       .expect(200)
 
-    expect(JSON.stringify(qimamAsk.body)).not.toContain('NEBRAS_SECRET_CODE_ALPHA')
-    expect(JSON.stringify(qimamAsk.body.sources)).not.toContain('nebras-print-policy.md')
+    expect(JSON.stringify(qimamAsk.body)).not.toContain('ALMARAI_SECRET_CODE_ALPHA')
+    expect(JSON.stringify(qimamAsk.body.sources)).not.toContain('almarai-print-policy.md')
   })
 
   it('blocks cross-company delete and document listing', async () => {
     const { app, store, qimamDoc } = await boot()
     cleanups.push(() => store.close())
-    const nebrasCookie = await login(app, 'sara@nebras.sa')
+    const nebrasCookie = await login(app, 'nasser@almarai.com')
 
     await request(app)
       .delete(`/api/knowledge/documents/${qimamDoc!.id}`)
@@ -163,7 +163,7 @@ describe('company-isolated RAG', () => {
       .set('Cookie', nebrasCookie)
       .expect(200)
 
-    expect(listed.body.documents.every((doc: { companyId: string }) => doc.companyId === 'company_nebras')).toBe(true)
+    expect(listed.body.documents.every((doc: { companyId: string }) => doc.companyId === 'company_almarai')).toBe(true)
     expect(listed.body.documents.some((doc: { filename: string }) => doc.filename.includes('qimam'))).toBe(false)
   })
 
@@ -184,7 +184,7 @@ describe('company-isolated RAG', () => {
     }
     const { app, store } = await boot(images)
     cleanups.push(() => store.close())
-    const cookie = await login(app, 'sara@nebras.sa')
+    const cookie = await login(app, 'nasser@almarai.com')
 
     const response = await request(app)
       .post('/api/design/generate')
@@ -194,13 +194,13 @@ describe('company-isolated RAG', () => {
         productName: 'بطاقات دعوة',
         eventTitle: 'منتدى القيادة',
         layout: 'portrait',
-        palette: ['#142433', '#b8893d'],
+        palette: ['#1f2937', '#b8893d'],
         company_id: 'company_qimam',
       })
       .expect(200)
 
     expect(response.body.imageDataUrl).toBe('data:image/webp;base64,dGVzdA==')
-    expect(receivedPrompt).toContain('نبراس للضيافة')
+    expect(receivedPrompt).toContain('المراعي')
     expect(receivedPrompt).not.toContain('قمم')
     expect(receivedPrompt).toContain('Do not render text')
   })
@@ -211,14 +211,14 @@ describe('company-isolated RAG', () => {
 
     await request(app)
       .post('/api/design/generate')
-      .send({ description: 'تصميم فخم', productName: 'دعوة', layout: 'portrait', palette: ['#142433', '#b8893d'] })
+      .send({ description: 'تصميم فخم', productName: 'دعوة', layout: 'portrait', palette: ['#1f2937', '#b8893d'] })
       .expect(401)
 
-    const cookie = await login(app, 'sara@nebras.sa')
+    const cookie = await login(app, 'nasser@almarai.com')
     const response = await request(app)
       .post('/api/design/generate')
       .set('Cookie', cookie)
-      .send({ description: 'تصميم دعوة فخم بنقوش هندسية', productName: 'دعوة', layout: 'portrait', palette: ['#142433', '#b8893d'] })
+      .send({ description: 'تصميم دعوة فخم بنقوش هندسية', productName: 'دعوة', layout: 'portrait', palette: ['#1f2937', '#b8893d'] })
       .expect(503)
 
     expect(response.body.code).toBe('IMAGE_GENERATION_UNAVAILABLE')
@@ -242,11 +242,11 @@ describe('company-isolated RAG', () => {
     expect(health.body.rag.llmConfigured).toBe(false)
     expect(health.body.rag.imageConfigured).toBe(false)
 
-    const cookie = await login(app, 'sara@nebras.sa')
+    const cookie = await login(app, 'nasser@almarai.com')
     const asked = await request(app)
       .post('/api/knowledge/ask')
       .set('Cookie', cookie)
-      .send({ question: 'ما سياسة الطباعة في نبراس؟' })
+      .send({ question: 'ما سياسة الطباعة في المراعي؟' })
       .expect(503)
     expect(asked.body.code).toBe('EMBEDDINGS_UNAVAILABLE')
   })
@@ -254,7 +254,7 @@ describe('company-isolated RAG', () => {
   it('ignores company_id on upload and blocks cross-company reindex', async () => {
     const { app, store, qimamDoc } = await boot()
     cleanups.push(() => store.close())
-    const nebrasCookie = await login(app, 'sara@nebras.sa')
+    const nebrasCookie = await login(app, 'nasser@almarai.com')
 
     await request(app)
       .post(`/api/knowledge/documents/${qimamDoc!.id}/reindex`)
@@ -265,28 +265,28 @@ describe('company-isolated RAG', () => {
       .post('/api/knowledge/documents')
       .set('Cookie', nebrasCookie)
       .field('company_id', 'company_qimam')
-      .attach('file', join(fixtures, 'nebras-print-policy.md'))
+      .attach('file', join(fixtures, 'almarai-print-policy.md'))
       .expect(201)
 
-    expect(uploaded.body.document.companyId).toBe('company_nebras')
+    expect(uploaded.body.document.companyId).toBe('company_almarai')
     expect(uploaded.body.document.status).toBe('ready')
 
     const listed = await request(app)
       .get('/api/knowledge/documents')
       .set('Cookie', nebrasCookie)
       .expect(200)
-    expect(listed.body.documents.every((doc: { companyId: string }) => doc.companyId === 'company_nebras')).toBe(true)
+    expect(listed.body.documents.every((doc: { companyId: string }) => doc.companyId === 'company_almarai')).toBe(true)
   })
 
   it('lets a member ask but not upload or delete', async () => {
     const { app, store, nebrasDoc } = await boot()
     cleanups.push(() => store.close())
-    const memberCookie = await login(app, 'lina@nebras.sa')
+    const memberCookie = await login(app, 'hind@almarai.com')
 
     await request(app)
       .post('/api/knowledge/documents')
       .set('Cookie', memberCookie)
-      .attach('file', join(fixtures, 'nebras-print-policy.md'))
+      .attach('file', join(fixtures, 'almarai-print-policy.md'))
       .expect(403)
 
     await request(app)
@@ -297,7 +297,7 @@ describe('company-isolated RAG', () => {
     const asked = await request(app)
       .post('/api/knowledge/ask')
       .set('Cookie', memberCookie)
-      .send({ question: 'ما سياسة بطاقات الدعوة في نبراس؟' })
+      .send({ question: 'ما سياسة بطاقات الدعوة في المراعي؟' })
       .expect(200)
     expect(JSON.stringify(asked.body.sources)).not.toContain('qimam-print-policy.md')
   })
@@ -314,7 +314,7 @@ describe('company-isolated RAG', () => {
       embeddings: new HashingEmbeddingProvider(),
       llm: new ScriptedLlm(),
     })
-    const cookie = await login(app, 'sara@nebras.sa')
+    const cookie = await login(app, 'nasser@almarai.com')
 
     await request(app)
       .post('/api/knowledge/documents')
@@ -336,14 +336,14 @@ describe('company-isolated RAG', () => {
   it('returns 503 when LLM is missing after retrieval, with sources and no invented answer', async () => {
     const { app, store } = await bootWithLlmGap()
     cleanups.push(() => store.close())
-    const cookie = await login(app, 'sara@nebras.sa')
+    const cookie = await login(app, 'nasser@almarai.com')
     const asked = await request(app)
       .post('/api/knowledge/ask')
       .set('Cookie', cookie)
-      .send({ question: 'ما رمز المعرفة الداخلي لنبراس؟' })
+      .send({ question: 'ما رمز المعرفة الداخلي للمراعي؟' })
       .expect(503)
     expect(asked.body.code).toBe('LLM_UNAVAILABLE')
-    expect(asked.body.sources.some((row: { filename: string }) => row.filename.includes('nebras'))).toBe(true)
+    expect(asked.body.sources.some((row: { filename: string }) => row.filename.includes('almarai'))).toBe(true)
     expect(asked.body.answer).not.toMatch(/تخمين|خصم الطباعة الداخلي/)
   })
 })
@@ -355,14 +355,14 @@ async function bootWithLlmGap() {
   await seedAccounts(store)
   const embeddings = new HashingEmbeddingProvider()
   const { OpenAICompatibleLlm } = await import('../lib/embeddings.ts')
-  const sara = (await store.getUserById('user_sara')) as SessionUser
+  const sara = (await store.getUserById('user_almarai_admin')) as SessionUser
   await ingestBuffer({
     store,
     embeddings,
     user: sara,
-    filename: 'nebras-print-policy.md',
+    filename: 'almarai-print-policy.md',
     mimeType: 'text/markdown',
-    buffer: readFileSync(join(fixtures, 'nebras-print-policy.md')),
+    buffer: readFileSync(join(fixtures, 'almarai-print-policy.md')),
     config,
   })
   const app = withPlatform(config, {

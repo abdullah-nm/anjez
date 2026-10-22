@@ -619,7 +619,7 @@ summary:focus-visible {
   align-content: center;
   gap: 0.4rem;
   position: relative;
-  padding: 2.8rem 1.1rem 1.1rem;
+  padding: 2.8rem 6% 2.8rem;
 }
 
 .preview-artwork {
@@ -653,7 +653,7 @@ summary:focus-visible {
   z-index: 1;
 }
 
-.preview > :not(.preview-artwork):not(.preview-shade):not(.preview-logo) {
+.preview > :not(.preview-artwork):not(.preview-shade):not(.preview-logo):not(.preview-orb):not(.preview-foot):not(.preview-pill):not(.preview-rule) {
   position: relative;
   z-index: 2;
   text-shadow: 0 1px 5px rgba(0, 0, 0, 0.55);
@@ -690,6 +690,59 @@ summary:focus-visible {
   bottom: 0.8rem;
   font-size: 0.75rem;
   opacity: 0.8;
+}
+
+.preview-pill {
+  justify-self: start;
+  width: fit-content;
+  border-radius: 999px;
+  padding: 0.18rem 0.7rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.preview-rule {
+  display: block;
+  height: 2px;
+  width: min(100%, 12rem);
+  margin-top: 0.35rem;
+}
+
+.preview-foot {
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  z-index: 3;
+  display: flex;
+  justify-content: space-between;
+  gap: 0.6rem;
+  align-items: center;
+  padding: 0.45rem 6%;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.preview-orb {
+  position: absolute;
+  border-radius: 50%;
+  opacity: 0.16;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.preview-orb-a {
+  width: 42%;
+  aspect-ratio: 1;
+  inset-inline-start: -8%;
+  bottom: 8%;
+}
+
+.preview-orb-b {
+  width: 22%;
+  aspect-ratio: 1;
+  inset-inline-start: 18%;
+  bottom: 2%;
+  opacity: 0.1;
 }
 
 .brand-strip {

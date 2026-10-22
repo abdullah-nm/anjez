@@ -81,6 +81,8 @@ export function Studio() {
   const [generating, setGenerating] = useState(false)
   const [generationError, setGenerationError] = useState('')
   const [liveSvg, setLiveSvg] = useState('')
+  const [previewError, setPreviewError] = useState('')
+  const [previewAttempt, setPreviewAttempt] = useState(0)
   const [saved, setSaved] = useState<SavedDesign[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
   const [companyEvents, setCompanyEvents] = useState<CompanyEvent[]>([])
@@ -126,20 +128,27 @@ export function Studio() {
           subhead: draft.subhead.trim(),
           body: [audience.trim(), note.trim()].filter(Boolean).join(' · '),
           dimensions: dimensionsFor(product.kind),
+          size: draft.size,
         }),
       })
         .then(async (response) => {
-          if (!response.ok) return
-          const payload = await response.json()
-          if (typeof payload.svg === 'string') setLiveSvg(payload.svg)
+          const payload = await response.json().catch(() => null)
+          if (!response.ok || typeof payload?.svg !== 'string') {
+            throw new Error(payload?.error || 'تعذر تحديث المعاينة.')
+          }
+          setLiveSvg(payload.svg)
+          setPreviewError('')
         })
-        .catch(() => undefined)
+        .catch((error: unknown) => {
+          if (error instanceof DOMException && error.name === 'AbortError') return
+          setPreviewError(error instanceof Error ? error.message : 'تعذر تحديث المعاينة.')
+        })
     }, 250)
     return () => {
       controller.abort()
       window.clearTimeout(timer)
     }
-  }, [user, phase, product.id, product.name, product.kind, headline, draft.subhead, audience, note])
+  }, [user, phase, product.id, product.name, product.kind, headline, draft.subhead, audience, note, previewAttempt])
 
   useEffect(() => {
     if (!user) return
@@ -185,6 +194,7 @@ export function Studio() {
           language,
           style: tone,
           dimensions: dimensionsFor(product.kind),
+          size: draft.size,
           instructions: note,
           content: headline,
         }),
@@ -455,6 +465,14 @@ export function Studio() {
       <aside className="preview-panel card stack canvas" ref={previewRef} aria-live="polite" aria-busy={generating}>
         <p className="eyebrow">{generating ? 'جارٍ التوليد' : active ? 'معاينة الشاشة' : 'قبل التوليد'} · {product.name}</p>
         <p className="preview-caption">معاينة فقط. ليست ملف طباعة.</p>
+        {previewError && phase === 'compose' && (
+          <div className="notice err" role="alert">
+            <p>{previewError}</p>
+            <button type="button" className="btn btn-secondary" onClick={() => setPreviewAttempt((value) => value + 1)}>
+              إعادة المحاولة
+            </button>
+          </div>
+        )}
         <div className={`canvas-frame shape-${shapeFor(product.id)} ${generating ? 'is-busy' : ''}`}>
           {active ? (
             <div className="svg-stage" dangerouslySetInnerHTML={{ __html: active.svg }} />

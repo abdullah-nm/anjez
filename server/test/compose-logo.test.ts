@@ -17,16 +17,16 @@ const PNG = Buffer.from(
 function brand(companyId: string, logoPath: string | null = null, logoMime: string | null = null) {
   return {
     companyId,
-    companyName: companyId === 'company_nebras' ? 'نبراس للضيافة' : 'قمم',
+    companyName: companyId === 'company_almarai' ? 'المراعي' : 'قمم',
     industry: 'ضيافة',
     description: '',
     language: 'ar' as const,
-    contactName: 'سارة',
-    email: 'sara@nebras.sa',
+    contactName: 'ناصر الحربي',
+    email: 'nasser@almarai.com',
     phone: '',
     city: '',
-    primaryColor: '#142433',
-    accentColor: '#c4a46a',
+    primaryColor: '#1f2937',
+    accentColor: '#d1d5db',
     slogan: '',
     tone: 'فاخر',
     logoPath,
@@ -47,7 +47,7 @@ function payload() {
     style: 'فاخر',
     dimensions: 'square',
     instructions: 'مساحة للنص',
-    content: 'نبراس',
+    content: 'المراعي',
   }
 }
 
@@ -62,7 +62,7 @@ describe('design compose uses the session company logo', () => {
     const storage = new LocalObjectStorage(join(dir, 'up'))
     const platform = new PlatformStore(join(dir, 'p.sqlite'))
     cleanups.push(() => platform.close())
-    const saved = storage.saveLogo('company_nebras', 'image/png', PNG)
+    const saved = storage.saveLogo('company_almarai', 'image/png', PNG)
     const sent: Array<{ mimeType: string; data: string } | null | undefined> = []
     const geminiImage = {
       configured: () => true,
@@ -74,9 +74,9 @@ describe('design compose uses the session company logo', () => {
     const design = await composeDesign({
       platform,
       storage,
-      brand: brand('company_nebras', saved.path, saved.mime),
-      userId: 'user_sara',
-      companyId: 'company_nebras',
+      brand: brand('company_almarai', saved.path, saved.mime),
+      userId: 'user_almarai_admin',
+      companyId: 'company_almarai',
       llm: new ScriptedLlm(),
       geminiText: { configured: () => false, generateJson: async () => '' },
       geminiImage,
@@ -93,7 +93,7 @@ describe('design compose uses the session company logo', () => {
   it('does not read another company logo path', () => {
     const dir = mkdtempSync(join(tmpdir(), 'anjz-logo-'))
     const storage = new LocalObjectStorage(join(dir, 'up'))
-    const saved = storage.saveLogo('company_nebras', 'image/png', PNG)
+    const saved = storage.saveLogo('company_almarai', 'image/png', PNG)
     expect(logoBelongsToCompany('company_qimam', saved.path)).toBe(false)
     const stolen = storage.readCompanyLogo('company_qimam', saved.path, 'image/png')
     expect(stolen.ok).toBe(false)
@@ -108,9 +108,9 @@ describe('design compose uses the session company logo', () => {
     const design = await composeDesign({
       platform,
       storage,
-      brand: brand('company_nebras'),
-      userId: 'user_sara',
-      companyId: 'company_nebras',
+      brand: brand('company_almarai'),
+      userId: 'user_almarai_admin',
+      companyId: 'company_almarai',
       llm: new ScriptedLlm(),
       geminiText: { configured: () => false, generateJson: async () => '' },
       geminiImage: {
@@ -131,13 +131,13 @@ describe('design compose uses the session company logo', () => {
     const storage = new LocalObjectStorage(join(dir, 'up'))
     const platform = new PlatformStore(join(dir, 'p.sqlite'))
     cleanups.push(() => platform.close())
-    const saved = storage.saveLogo('company_nebras', 'image/png', PNG)
+    const saved = storage.saveLogo('company_almarai', 'image/png', PNG)
     const design = await composeDesign({
       platform,
       storage,
-      brand: brand('company_nebras', saved.path, saved.mime),
-      userId: 'user_sara',
-      companyId: 'company_nebras',
+      brand: brand('company_almarai', saved.path, saved.mime),
+      userId: 'user_almarai_admin',
+      companyId: 'company_almarai',
       llm: new ScriptedLlm(),
       geminiText: { configured: () => false, generateJson: async () => '' },
       geminiImage: {

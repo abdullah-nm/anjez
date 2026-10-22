@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { events as demoEvents, formatDate, formatMoney, productById, recommendations } from '../data'
+import { formatDate, productById } from '../data'
 import { useStore } from '../store'
 import { useAuth } from '../auth'
 
@@ -26,29 +26,43 @@ export function Dashboard() {
   const [liveEvents, setLiveEvents] = useState<LiveEvent[]>([])
   const [unread, setUnread] = useState(0)
   const [eventsReady, setEventsReady] = useState(false)
+  const [eventsError, setEventsError] = useState('')
+  const [loadKey, setLoadKey] = useState(0)
 
   useEffect(() => {
-    if (!user) {
-      setEventsReady(true)
-      return
-    }
+    if (!user) return
+    let cancelled = false
     setEventsReady(false)
-    void Promise.all([
-      fetch('/api/events', { credentials: 'include' }).then((r) => r.json()),
-      fetch('/api/notifications', { credentials: 'include' }).then((r) => r.json()),
-    ]).then(([eventsPayload, notesPayload]) => {
-      setLiveEvents(eventsPayload.events || [])
-      setUnread(notesPayload.unread || 0)
-      setEventsReady(true)
-    })
-  }, [user])
+    setEventsError('')
+    void (async () => {
+      try {
+        const [eventsResponse, notesResponse] = await Promise.all([
+          fetch('/api/events', { credentials: 'include' }),
+          fetch('/api/notifications', { credentials: 'include' }),
+        ])
+        if (!eventsResponse.ok || !notesResponse.ok) throw new Error('تعذر تحميل المناسبات والتنبيهات.')
+        const eventsPayload = await eventsResponse.json()
+        const notesPayload = await notesResponse.json()
+        if (cancelled) return
+        setLiveEvents(eventsPayload.events || [])
+        setUnread(notesPayload.unread || 0)
+        setEventsReady(true)
+      } catch (error) {
+        if (cancelled) return
+        setEventsError(error instanceof Error ? error.message : 'تعذر تحميل المناسبات والتنبيهات.')
+        setEventsReady(true)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [user, loadKey])
 
   function openStudio(productId: string, eventId: string) {
     const product = productById(productId)
     if (!product) return
     const live = liveEvents.find((item) => item.id === eventId)
-    const demo = demoEvents.find((item) => item.id === eventId)
-      const title = live?.title || demo?.title || ''
+    const title = live?.title || ''
     setDraft({
       ...draft,
       productId,
@@ -62,39 +76,35 @@ export function Dashboard() {
     navigate(`/studio?eventId=${eventId}`)
   }
 
-  const upcoming = (user ? liveEvents : demoEvents.map((event) => ({
-    id: event.id,
-    title: event.title,
-    date: event.date,
-    audience: event.audience,
-    category: event.kind,
-    reminderDays: [7, 1],
-  }))).filter((event) => remaining(event.date) >= -1).slice(0, 6)
+  const upcoming = liveEvents.filter((event) => remaining(event.date) >= -1).slice(0, 6)
 
-  if (loading || (user && !eventsReady)) return <p>جارٍ التحميل…</p>
+  if (loading || !eventsReady) return <p>جارٍ التحميل…</p>
 
   return (
     <div className="stack">
       <section className="section-head">
         <h1>تصميم جديد</h1>
-        {user ? (
-          <Link className="btn btn-primary" to="/studio">ابدأ</Link>
-        ) : (
-          <Link className="btn btn-primary" to="/login" state={{ from: '/studio' }}>دخول</Link>
-        )}
+        <Link className="btn btn-primary" to="/studio">ابدأ</Link>
       </section>
 
-      {user && unread > 0 && (
+      {unread > 0 && (
         <p className="notice">
           لديك {unread} تنبيه غير مقروء. <Link to="/notifications">مركز التنبيهات</Link>
         </p>
       )}
-      {!user && <p className="muted">المواعيد أدناه من كتالوج تجريبي حتى تسجّل الدخول.</p>}
 
       <section>
         <div className="section-head">
           <h2>أقرب المناسبات</h2>
         </div>
+        {eventsError ? (
+          <div className="notice err" role="alert">
+            <p>{eventsError}</p>
+            <button type="button" className="btn btn-secondary" onClick={() => setLoadKey((value) => value + 1)}>
+              إعادة المحاولة
+            </button>
+          </div>
+        ) : (
         <div className="event-grid">
           {upcoming.length === 0 && <p className="muted">لا مناسبات قادمة. أضف من التقويم.</p>}
           {upcoming.map((event) => {
@@ -114,32 +124,8 @@ export function Dashboard() {
             )
           })}
         </div>
+        )}
       </section>
-
-      <details className="card catalog-extra">
-        <summary>أمثلة منتجات من الكتالوج</summary>
-        <div className="section-head">
-          <h2>اقتراحات جاهزة، وليست طلبات تنفيذ</h2>
-        </div>
-        <div className="rec-list">
-          {recommendations.map((rec) => {
-            const event = demoEvents.find((item) => item.id === rec.eventId)
-            const product = productById(rec.productId)
-            if (!event || !product) return null
-            return (
-              <article key={rec.id} className="card rec-card">
-                <div>
-                  <p className="eyebrow">{event.title}</p>
-                  <h3>{product.name}</h3>
-                  <p>{rec.reason}</p>
-                  <p className="muted">سعر كتالوج استرشادي {formatMoney(product.fromPrice)} — ليس عرض تنفيذ.</p>
-                </div>
-                <button type="button" className="btn btn-ghost" onClick={() => openStudio(product.id, event.id)}>استخدم هذا المنتج</button>
-              </article>
-            )
-          })}
-        </div>
-      </details>
 
       {orders.length > 0 && (
         <ul className="order-mini">

@@ -13,16 +13,16 @@ const here = dirname(fileURLToPath(import.meta.url))
 export const DEMO_PASSWORD = 'AnjzDemo!26'
 
 export const DEMO_COMPANIES = [
-  { id: 'company_nebras', name: 'نبراس للضيافة' },
+  { id: 'company_almarai', name: 'المراعي' },
   { id: 'company_qimam', name: 'قمم للفعاليات' },
 ] as const
 
 export const DEMO_USERS = [
   {
-    id: 'user_sara',
-    companyId: 'company_nebras',
-    email: 'sara@nebras.sa',
-    name: 'سارة العتيبي',
+    id: 'user_almarai_admin',
+    companyId: 'company_almarai',
+    email: 'nasser@almarai.com',
+    name: 'ناصر الحربي',
     role: 'admin' as const,
   },
   {
@@ -33,21 +33,24 @@ export const DEMO_USERS = [
     role: 'admin' as const,
   },
   {
-    id: 'user_lina',
-    companyId: 'company_nebras',
-    email: 'lina@nebras.sa',
-    name: 'لينا الدوسري',
+    id: 'user_almarai_member',
+    companyId: 'company_almarai',
+    email: 'hind@almarai.com',
+    name: 'هند السبيعي',
     role: 'member' as const,
   },
 ]
 
+const LEGACY_NEBRAS_USERS = ['user_sara', 'user_lina']
+
 export async function seedAccounts(store: KnowledgeStore) {
+  await store.removeCompany('company_nebras', LEGACY_NEBRAS_USERS)
   const passwordHash = hashPassword(DEMO_PASSWORD)
   for (const company of DEMO_COMPANIES) {
-    await store.insertCompany(company.id, company.name)
+    await store.upsertCompany(company.id, company.name)
   }
   for (const user of DEMO_USERS) {
-    await store.insertUser({ ...user, passwordHash })
+    await store.upsertUser({ ...user, passwordHash })
   }
 }
 
@@ -58,9 +61,9 @@ export async function seedDocuments(input: {
 }) {
   const files = [
     {
-      companyId: 'company_nebras',
-      userId: 'user_sara',
-      filename: 'nebras-print-policy.md',
+      companyId: 'company_almarai',
+      userId: 'user_almarai_admin',
+      filename: 'almarai-print-policy.md',
     },
     {
       companyId: 'company_qimam',

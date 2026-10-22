@@ -4,10 +4,10 @@ import type { PlatformStore } from './store.ts'
 
 const DEMO_COMPANIES = [
   {
-    id: 'company_nebras',
-    adminId: 'user_sara',
-    title: '[تجريبي] إطلاق قائمة الشتاء',
-    audience: 'ضيوف الضيافة',
+    id: 'company_almarai',
+    adminId: 'user_almarai_admin',
+    title: '[تجريبي] إطلاق منتج',
+    audience: 'عملاء المراعي',
     category: 'launch' as const,
   },
   {
@@ -21,6 +21,7 @@ const DEMO_COMPANIES = [
 
 /** Labeled fixture events only. Never inserts into unknown company_ids. */
 export function seedPlatformDemo(platform: PlatformStore) {
+  platform.purgeCompany('company_nebras', ['user_sara', 'user_lina'])
   const now = new Date().toISOString()
   const today = riyadhYmd()
 

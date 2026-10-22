@@ -53,13 +53,13 @@ describe('company platform isolation', () => {
     const { app, store } = harness()
     cleanups.push(() => store.close())
     await seedAccounts(store)
-    const nebras = await login(app, 'sara@nebras.sa')
+    const nebras = await login(app, 'nasser@almarai.com')
     const qimam = await login(app, 'fahd@qimam.sa')
 
     const created = await request(app)
       .post('/api/events')
       .set('Cookie', nebras)
-      .send({ title: 'إطلاق نبراس', date: '2026-11-02', category: 'launch', reminderDays: [7, 1], company_id: 'company_qimam' })
+      .send({ title: 'إطلاق المراعي', date: '2026-11-02', category: 'launch', reminderDays: [7, 1], company_id: 'company_qimam' })
       .expect(201)
     const eventId = created.body.event.id as string
 
@@ -78,15 +78,15 @@ describe('company platform isolation', () => {
       .set('Cookie', nebras)
       .send({
         eventId,
-        eventTitle: 'إطلاق نبراس',
+        eventTitle: 'إطلاق المراعي',
         productId: 'prd-poster',
         productName: 'ملصقات',
         purpose: 'إطلاق',
         language: 'ar',
       })
       .expect(201)
-    expect(composed.body.design.svg).toContain('نبراس')
-    expect(composed.body.design.companyId).toBe('company_nebras')
+    expect(composed.body.design.svg).toContain('المراعي')
+    expect(composed.body.design.companyId).toBe('company_almarai')
     expect(composed.body.design.backgroundKind).toBe('branded_svg')
 
     const png = Buffer.from(
@@ -103,7 +103,7 @@ describe('company platform isolation', () => {
       .set('Cookie', nebras)
       .send({
         eventId,
-        eventTitle: 'إطلاق نبراس',
+        eventTitle: 'إطلاق المراعي',
         productId: 'prd-poster',
         productName: 'ملصقات',
         purpose: 'إطلاق',
@@ -127,7 +127,7 @@ describe('company platform isolation', () => {
         productName: 'ملصقات',
         purpose: 'إطلاق',
         language: 'ar',
-        company_id: 'company_nebras',
+        company_id: 'company_almarai',
       })
       .expect(201)
     expect(qimamCompose.body.design.svg).not.toContain(png.toString('base64'))
@@ -139,7 +139,7 @@ describe('company platform isolation', () => {
     cleanups.push(() => store.close())
     await seedAccounts(store)
     await request(app).post('/api/internal/cron/reminders').expect(401)
-    const nebras = await login(app, 'sara@nebras.sa')
+    const nebras = await login(app, 'nasser@almarai.com')
     const today = riyadhYmd()
     const date = addDays(today, 7)
     await request(app).post('/api/events').set('Cookie', nebras).send({
@@ -159,7 +159,7 @@ describe('company platform isolation', () => {
     const { app, store } = harness()
     cleanups.push(() => store.close())
     await seedAccounts(store)
-    const cookie = await login(app, 'sara@nebras.sa')
+    const cookie = await login(app, 'nasser@almarai.com')
     await request(app)
       .post('/api/brand/logo')
       .set('Cookie', cookie)

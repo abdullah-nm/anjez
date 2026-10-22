@@ -29,6 +29,16 @@ export interface KnowledgeStore {
     role: Role
     passwordHash: string
   }): Promise<void>
+  upsertCompany(id: string, name: string): Promise<void>
+  upsertUser(input: {
+    id: string
+    companyId: string
+    email: string
+    name: string
+    role: Role
+    passwordHash: string
+  }): Promise<void>
+  removeCompany(companyId: string, userIds: string[]): Promise<void>
   createDocument(
     input: Omit<KnowledgeDocument, 'chunkCount' | 'deletedAt' | 'errorCode' | 'errorMessage'> & {
       errorCode?: string | null
@@ -223,6 +233,64 @@ export class SqliteStore implements KnowledgeStore {
       input.passwordHash,
       new Date().toISOString(),
     )
+  }
+
+  async upsertCompany(id: string, name: string) {
+    this.db.prepare(
+      `INSERT INTO companies (id, name, created_at) VALUES (?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET name = excluded.name`,
+    ).run(id, name, new Date().toISOString())
+  }
+
+  async upsertUser(input: {
+    id: string
+    companyId: string
+    email: string
+    name: string
+    role: Role
+    passwordHash: string
+  }) {
+    this.db.prepare(
+      `INSERT INTO users (id, company_id, email, name, role, password_hash, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         company_id = excluded.company_id,
+         email = excluded.email,
+         name = excluded.name,
+         role = excluded.role,
+         password_hash = excluded.password_hash`,
+    ).run(
+      input.id,
+      input.companyId,
+      input.email,
+      input.name,
+      input.role,
+      input.passwordHash,
+      new Date().toISOString(),
+    )
+  }
+
+  async removeCompany(companyId: string, userIds: string[]) {
+    const marks = userIds.map(() => '?').join(', ')
+    this.db.exec('BEGIN')
+    try {
+      this.db.prepare('DELETE FROM chunks WHERE company_id = ?').run(companyId)
+      if (userIds.length) {
+        this.db.prepare(`DELETE FROM chunks WHERE document_id IN (SELECT id FROM documents WHERE created_by IN (${marks}))`).run(...userIds)
+        this.db.prepare(`DELETE FROM documents WHERE company_id = ? OR created_by IN (${marks})`).run(companyId, ...userIds)
+        this.db.prepare(`DELETE FROM audit_logs WHERE company_id = ? OR actor_user_id IN (${marks})`).run(companyId, ...userIds)
+        this.db.prepare(`DELETE FROM users WHERE company_id = ? OR id IN (${marks})`).run(companyId, ...userIds)
+      } else {
+        this.db.prepare('DELETE FROM documents WHERE company_id = ?').run(companyId)
+        this.db.prepare('DELETE FROM audit_logs WHERE company_id = ?').run(companyId)
+        this.db.prepare('DELETE FROM users WHERE company_id = ?').run(companyId)
+      }
+      this.db.prepare('DELETE FROM companies WHERE id = ?').run(companyId)
+      this.db.exec('COMMIT')
+    } catch (error) {
+      this.db.exec('ROLLBACK')
+      throw error
+    }
   }
 
   async createDocument(
@@ -492,6 +560,60 @@ class PostgresStore implements KnowledgeStore {
        ON CONFLICT (id) DO NOTHING`,
       [input.id, input.companyId, input.email, input.name, input.role, input.passwordHash],
     )
+  }
+
+  async upsertCompany(id: string, name: string) {
+    await this.pool.query(
+      `INSERT INTO companies (id, name) VALUES ($1, $2)
+       ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name`,
+      [id, name],
+    )
+  }
+
+  async upsertUser(input: {
+    id: string
+    companyId: string
+    email: string
+    name: string
+    role: Role
+    passwordHash: string
+  }) {
+    await this.pool.query(
+      `INSERT INTO users (id, company_id, email, name, role, password_hash)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (id) DO UPDATE SET
+         company_id = EXCLUDED.company_id,
+         email = EXCLUDED.email,
+         name = EXCLUDED.name,
+         role = EXCLUDED.role,
+         password_hash = EXCLUDED.password_hash`,
+      [input.id, input.companyId, input.email, input.name, input.role, input.passwordHash],
+    )
+  }
+
+  async removeCompany(companyId: string, userIds: string[]) {
+    const client = await this.pool.connect()
+    try {
+      await client.query('BEGIN')
+      await client.query('DELETE FROM chunks WHERE company_id = $1', [companyId])
+      if (userIds.length) {
+        await client.query('DELETE FROM chunks WHERE document_id IN (SELECT id FROM documents WHERE created_by = ANY($1::text[]))', [userIds])
+        await client.query('DELETE FROM documents WHERE company_id = $1 OR created_by = ANY($2::text[])', [companyId, userIds])
+        await client.query('DELETE FROM audit_logs WHERE company_id = $1 OR actor_user_id = ANY($2::text[])', [companyId, userIds])
+        await client.query('DELETE FROM users WHERE company_id = $1 OR id = ANY($2::text[])', [companyId, userIds])
+      } else {
+        await client.query('DELETE FROM documents WHERE company_id = $1', [companyId])
+        await client.query('DELETE FROM audit_logs WHERE company_id = $1', [companyId])
+        await client.query('DELETE FROM users WHERE company_id = $1', [companyId])
+      }
+      await client.query('DELETE FROM companies WHERE id = $1', [companyId])
+      await client.query('COMMIT')
+    } catch (error) {
+      await client.query('ROLLBACK')
+      throw error
+    } finally {
+      client.release()
+    }
   }
 
   async createDocument(

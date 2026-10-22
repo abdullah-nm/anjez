@@ -15,6 +15,7 @@ export function previewTemplate(input: {
   subhead: string
   body: string
   dimensions: string
+  size?: string
 }) {
   return brandedSvg({
     brand: input.brand,
@@ -23,6 +24,7 @@ export function previewTemplate(input: {
     subhead: input.subhead,
     body: input.body,
     dimensions: input.dimensions,
+    size: input.size,
     logoHref: input.logoHref,
   })
 }
@@ -46,6 +48,7 @@ export async function composeDesign(input: {
     language: BrandLanguage
     style: string
     dimensions: string
+    size?: string
     instructions: string
     content: string
   }
@@ -97,6 +100,7 @@ export async function composeDesign(input: {
     subhead: copy.subhead,
     body: copy.body,
     dimensions: input.payload.dimensions,
+    size: input.payload.size,
     logoHref,
     backgroundHref,
   })

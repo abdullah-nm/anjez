@@ -6,15 +6,15 @@ import type {
 } from './types'
 
 export const defaultBrand: CompanyBrand = {
-  companyName: 'نبراس للضيافة',
-  industry: 'فعاليات وضيافة شركات',
-  contactName: 'سارة العتيبي',
-  email: 'sara@nebras.sa',
-  phone: '011 420 1180',
-  city: 'الرياض',
-  primaryColor: '#142433',
-  accentColor: '#c4a46a',
-  slogan: 'ضيافة تُروى وتُذكر',
+  companyName: '',
+  industry: '',
+  contactName: '',
+  email: '',
+  phone: '',
+  city: '',
+  primaryColor: '#1f2937',
+  accentColor: '#d1d5db',
+  slogan: '',
   tone: 'فاخر',
 }
 
@@ -44,7 +44,7 @@ export const events: CompanyEvent[] = [
     title: 'ملتقى الشركاء',
     kind: 'partners',
     date: '2026-12-08',
-    venue: 'مقر نبراس — حي الصحافة',
+    venue: 'قاعة الشركاء',
     audience: 'مديرو الحسابات والموردون',
     attendees: 60,
     notes: 'يوم عمل مفتوح مع ركن هدايا.',
@@ -210,7 +210,7 @@ export const recommendations: Recommendation[] = [
     id: 'rec-5',
     eventId: 'evt-partners',
     productId: 'prd-bag',
-    reason: 'ركن الهدايا يحتاج حملاً أنيقاً يحمل اسم نبراس.',
+    reason: 'ركن الهدايا يحتاج حملاً يحمل اسم الشركة.',
   },
   {
     id: 'rec-6',

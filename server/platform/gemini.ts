@@ -9,11 +9,28 @@ const IMAGE_FALLBACKS = [
   'gemini-2.5-flash-image',
 ]
 
+function redactSecrets(detail: string) {
+  return detail
+    .replace(/AIza[0-9A-Za-z_-]+/g, '[redacted]')
+    .replace(/key=[^&\s"]+/gi, 'key=[redacted]')
+}
+
 function sanitizeGeminiDetail(detail: string) {
   return detail
     .slice(0, 180)
     .replace(/AIza[0-9A-Za-z_-]+/g, '[redacted]')
     .replace(/key=[^&\s"]+/gi, 'key=[redacted]')
+}
+
+function geminiResponseMessage(raw: string) {
+  let message = raw
+  try {
+    const parsed = JSON.parse(raw) as { error?: { message?: unknown } }
+    if (typeof parsed.error?.message === 'string') message = parsed.error.message
+  } catch {
+    // Gemini sometimes returns a non-JSON error body.
+  }
+  return redactSecrets(message)
 }
 
 export function suggestedModelFromGeminiError(raw: string) {
@@ -87,6 +104,11 @@ async function generateContentWithFailover(
         last = error
         const status = (error as MissingProviderError & { status?: number }).status
         const raw = (error as MissingProviderError & { raw?: string }).raw || ''
+        if (code === 'IMAGE_GENERATION_UNAVAILABLE' && typeof status === 'number') {
+          console.error(
+            `Gemini image request failed status=${status} model=${name} message=${geminiResponseMessage(raw)}`,
+          )
+        }
         if (status === 404) {
           const suggested = suggestedModelFromGeminiError(raw)
           if (suggested && !tried.has(suggested)) queue.push(suggested)

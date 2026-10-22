@@ -1,4 +1,5 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, rmSync } from 'node:fs'
+import { join } from 'node:path'
 import { createApp } from './app.ts'
 import { loadConfig } from './config.ts'
 import { createEmbeddingProvider, createLlmProvider } from './lib/providers.ts'
@@ -40,6 +41,10 @@ if (config.embedding.apiKey) {
 
 const platform = new PlatformStore(config.platformSqlitePath)
 seedPlatformDemo(platform)
+for (const legacyDir of ['company_nebras', join('logos', 'company_nebras')]) {
+  const path = join(config.uploadRoot, legacyDir)
+  if (existsSync(path)) rmSync(path, { recursive: true, force: true })
+}
 const storage = new LocalObjectStorage(config.uploadRoot)
 const app = createApp({ config, store, embeddings, llm, platform, storage })
 app.listen(config.port, '127.0.0.1', () => {
