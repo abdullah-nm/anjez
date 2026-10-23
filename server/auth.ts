@@ -21,7 +21,8 @@ export async function loginUser(
     throw new AppError('البريد أو كلمة المرور غير صحيحة.', 401, 'INVALID_CREDENTIALS')
   }
   const exp = Date.now() + ttlMs
-  const token = signSession(JSON.stringify({ sub: user.id, exp }), secret)
+  const epoch = await store.sessionEpoch(user.id)
+  const token = signSession(JSON.stringify({ sub: user.id, exp, epoch }), secret)
   const { passwordHash: _, ...session } = user
   void _
   return { token, user: session }
@@ -76,9 +77,13 @@ export async function userFromRequest(
   const payload = unsignSession(token, secret)
   if (!payload) return null
   try {
-    const parsed = JSON.parse(payload) as { sub?: string; exp?: number }
+    const parsed = JSON.parse(payload) as { sub?: string; exp?: number; epoch?: number }
     if (!parsed.sub || !parsed.exp || parsed.exp < Date.now()) return null
-    return store.getUserById(parsed.sub)
+    const user = await store.getUserById(parsed.sub)
+    if (!user) return null
+    const epoch = await store.sessionEpoch(user.id)
+    if ((parsed.epoch ?? 0) !== epoch) return null
+    return user
   } catch {
     return null
   }

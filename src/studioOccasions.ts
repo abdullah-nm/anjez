@@ -3,6 +3,9 @@ export type StudioOccasion = {
   title: string
   date: string
   occasionKey: string | null
+  category?: string | null
+  audience?: string
+  dateOfficial?: boolean
 }
 
 type CompanyInput = {
@@ -11,6 +14,9 @@ type CompanyInput = {
   date?: string | null
   status?: string
   occasionKey?: string | null
+  category?: string | null
+  audience?: string
+  dateCertainty?: string
 }
 
 type SystemInput = {
@@ -19,6 +25,8 @@ type SystemInput = {
   title?: string
   titleAr?: string
   date?: string | null
+  category?: string | null
+  dateCertainty?: string
 }
 
 export function riyadhToday(date = new Date()) {
@@ -67,7 +75,15 @@ function companyRow(event: CompanyInput, today: string): StudioOccasion | null {
   const title = event.title?.trim() || ''
   const date = event.date?.trim() || ''
   if (!id || !title || !date || date < today || event.status === 'done') return null
-  return { id, title, date, occasionKey: event.occasionKey?.trim() || null }
+  return {
+    id,
+    title,
+    date,
+    occasionKey: event.occasionKey?.trim() || null,
+    category: event.category ?? null,
+    audience: event.audience?.trim() || '',
+    dateOfficial: event.dateCertainty === 'official',
+  }
 }
 
 function systemRow(event: SystemInput, today: string): StudioOccasion | null {
@@ -76,5 +92,13 @@ function systemRow(event: SystemInput, today: string): StudioOccasion | null {
   const title = (event.titleAr || event.title || '').trim()
   const date = event.date?.trim() || ''
   if (!id || !title || !date || date < today) return null
-  return { id, title, date, occasionKey: key || null }
+  return {
+    id,
+    title,
+    date,
+    occasionKey: key || null,
+    category: event.category ?? null,
+    audience: '',
+    dateOfficial: event.dateCertainty === 'official',
+  }
 }

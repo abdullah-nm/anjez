@@ -233,4 +233,33 @@ describe('company accounts', () => {
     await request(reopened.app).get('/api/observability/dashboard?preset=7d').set('Cookie', cookieOf(again)).expect(403)
     await request(reopened.app).post('/api/login').send({ email: 'noor@example.com', password: 'wrong-password' }).expect(401)
   })
+
+  it('renames the signed-in company and owner without changing role, and logout voids the cookie', async () => {
+    const { app, store } = harness()
+    cleanups.push(() => store.close())
+    await seedAccounts(store)
+    const created = await request(app).post('/api/register').send({
+      companyName: 'شركة النور',
+      email: 'noor@example.com',
+      password: 'CompanyPass1',
+      confirm: 'CompanyPass1',
+    }).expect(201)
+    const cookie = cookieOf(created)
+    const renamed = await request(app).patch('/api/account').set('Cookie', cookie).send({
+      name: 'نورة الجديدة',
+      companyName: 'النور المحدودة',
+      role: 'admin',
+    }).expect(200)
+    expect(renamed.body.user).toMatchObject({ name: 'نورة الجديدة', companyName: 'النور المحدودة', role: 'member' })
+    const session = await request(app).get('/api/session').set('Cookie', cookie).expect(200)
+    expect(session.body.user).toMatchObject({ name: 'نورة الجديدة', companyName: 'النور المحدودة', role: 'member' })
+    const hind = await request(app).post('/api/login').send({ email: 'hind@almarai.com', password: 'AnjzDemo!26' }).expect(200)
+    await request(app).patch('/api/account').set('Cookie', cookieOf(hind)).send({ name: 'هند', companyName: 'اسم آخر' }).expect(403)
+    const own = await request(app).patch('/api/account').set('Cookie', cookieOf(hind)).send({ name: 'هند الحربي' }).expect(200)
+    expect(own.body.user.role).toBe('member')
+    expect(own.body.user.companyName).not.toBe('اسم آخر')
+    await request(app).post('/api/logout').set('Cookie', cookie).expect(200)
+    const gone = await request(app).get('/api/session').set('Cookie', cookie).expect(200)
+    expect(gone.body.user).toBeNull()
+  })
 })

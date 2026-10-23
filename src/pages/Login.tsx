@@ -16,49 +16,57 @@ export function Login() {
 
   if (user) return <Navigate to={redirectTo} replace />
 
-  async function onSubmit(event: FormEvent) {
+  async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (submitting) return
     setError(null)
+    const field = (name: string) => {
+      const element = event.currentTarget.elements.namedItem(name)
+      return element instanceof HTMLInputElement ? element.value : ''
+    }
+    const emailValue = (email || field('email')).trim()
+    const passwordValue = password || field('password')
+    const confirmed = confirm || field('confirm-password')
+    const companyValue = (companyName || field('organization')).trim()
     if (registerMode) {
-      if (companyName.trim().length < 2) {
+      if (companyValue.length < 2) {
         setError('أدخل اسم الشركة بين حرفين وثمانين حرفًا.')
         return
       }
-      if (!email.trim()) {
+      if (!emailValue) {
         setError('أدخل البريد الإلكتروني.')
         return
       }
-      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailValue)) {
         setError('البريد الإلكتروني غير صالح.')
         return
       }
-      if (!password) {
+      if (!passwordValue) {
         setError('أدخل كلمة المرور.')
         return
       }
-      if (password.length < 8) {
+      if (passwordValue.length < 8) {
         setError('كلمة المرور يجب أن تكون 8 أحرف على الأقل.')
         return
       }
-      if (password !== confirm) {
+      if (passwordValue !== confirmed) {
         setError('تأكيد كلمة المرور غير مطابق.')
         return
       }
     } else {
-      if (!email.trim()) {
+      if (!emailValue) {
         setError('أدخل البريد الإلكتروني.')
         return
       }
-      if (!password) {
+      if (!passwordValue) {
         setError('أدخل كلمة المرور.')
         return
       }
     }
     setSubmitting(true)
     const message = registerMode
-      ? await register({ companyName, email, password, confirm })
-      : await login(email, password)
+      ? await register({ companyName: companyValue, email: emailValue, password: passwordValue, confirm: confirmed })
+      : await login(emailValue, passwordValue)
     setSubmitting(false)
     if (message) setError(message)
   }

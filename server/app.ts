@@ -26,7 +26,7 @@ import {
   noteMetric,
 } from './observability/context.ts'
 import { runWithAttemptSink } from './observability/attempts.ts'
-import { buildDashboard, parseDashboardRange, type DashboardPreset } from './observability/dashboard.ts'
+import { applyDashboardFocus, buildDashboard, dashboardFacets, parseDashboardRange, type DashboardPreset } from './observability/dashboard.ts'
 import { featureForRoute, GENERATION_TIMEOUT_MS, isDisplayableImage, METRIC_WINDOWS, MetricsStore, type GenerationStatus, type MetricsRecorder } from './observability/metrics.ts'
 
 const loginSchema = z.object({
@@ -208,7 +208,8 @@ export function createApp(deps: Deps) {
     try {
       const user = await userFromRequest(deps.store, req, deps.config.sessionSecret)
       if (user) attachMetricCompany(req, user.companyId)
-      res.clearCookie(SESSION_COOKIE, { path: '/', sameSite: 'lax', httpOnly: true })
+      if (user) await deps.store.bumpSessionEpoch(user.id)
+      res.clearCookie(SESSION_COOKIE, { path: '/', sameSite: 'lax', httpOnly: true, secure: false })
       if (user) {
         await deps.store.audit({
           actorUserId: user.id,
@@ -753,6 +754,7 @@ export function createApp(deps: Deps) {
         status: order.status,
         quantity: order.quantity,
         deliveryDate: order.delivery_date,
+        deliveryCity: order.delivery_city,
         designId: order.design_id,
         createdAt: order.created_at,
       }))
@@ -847,6 +849,7 @@ export function createApp(deps: Deps) {
         status: order.status,
         quantity: order.quantity,
         deliveryDate: order.delivery_date,
+        deliveryCity: order.delivery_city,
         designId: order.design_id,
         createdAt: order.created_at,
       })
@@ -868,6 +871,35 @@ export function createApp(deps: Deps) {
         occasionKey: order.designId ? occasionByDesign.get(order.designId) ?? null : null,
       })
       const orders = currentOrders.map(withOccasion)
+      const previousWithOccasion = previousOrders.map(withOccasion)
+      const companyRaw = typeof req.query.company === 'string' ? req.query.company.trim() : ''
+      if (companyRaw && !/^company_[A-Za-z0-9_-]{1,80}$/.test(companyRaw)) {
+        throw new AppError('معرّف الشركة غير صالح.', 400, 'INVALID_FILTER')
+      }
+      const cityQuery = typeof req.query.city === 'string' ? req.query.city : undefined
+      const occasionQuery = typeof req.query.occasion === 'string' ? req.query.occasion : undefined
+      const focus = {
+        companyId: companyRaw || null,
+        cityKey: cityQuery === undefined ? undefined : (cityQuery === '__blank__' ? '' : cityQuery.slice(0, 80)),
+        occasionKey: occasionQuery === undefined ? undefined : (occasionQuery === '__blank__' ? null : occasionQuery.slice(0, 80)),
+      }
+      const focused = applyDashboardFocus({
+        focus,
+        orders,
+        previousOrders: previousWithOccasion,
+        jobs: current.jobs,
+        previousJobs: previous.jobs,
+        attempts: current.attempts,
+        live: current.live,
+        occasionByDesign,
+      })
+      const facets = dashboardFacets({
+        companies: companies.map((company) => ({ id: company.id, name: company.name })),
+        orders: focus.companyId ? orders.filter((order) => order.companyId === focus.companyId) : orders,
+        jobs: focus.companyId ? current.jobs.filter((job) => job.company_id === focus.companyId) : current.jobs,
+        occasionByDesign,
+      })
+      const focusActive = Boolean(focus.companyId) || focus.cityKey !== undefined || focus.occasionKey !== undefined
       const report = buildDashboard({
         preset: preset.data,
         from: range.from,
@@ -877,18 +909,20 @@ export function createApp(deps: Deps) {
         now: Date.now(),
         detailedSince: generations?.detailedSince() ?? Date.now(),
         followupHours: deps.config.orderFollowupHours,
-        jobs: current.jobs,
-        previousJobs: previous.jobs,
-        attempts: current.attempts,
-        live: current.live,
-        orders,
-        previousOrderCount: deps.platform.countPrintOrdersBetween(new Date(range.previousFrom).toISOString(), new Date(range.previousTo).toISOString()),
+        jobs: focused.jobs,
+        previousJobs: focused.previousJobs,
+        attempts: focused.attempts,
+        live: focused.live,
+        orders: focused.orders,
+        previousOrderCount: focusActive
+          ? focused.previousOrders.length
+          : deps.platform.countPrintOrdersBetween(new Date(range.previousFrom).toISOString(), new Date(range.previousTo).toISOString()),
         activeUsers: (await deps.store.activeActorIdsAll(fromIso, toIso)).length,
         previousActiveUsers: (await deps.store.activeActorIdsAll(new Date(range.previousFrom).toISOString(), new Date(Math.max(range.previousFrom, range.previousTo - 1)).toISOString())).length,
         status: status.data,
         registrations: companies.map((company) => Date.parse(company.createdAt)),
         companyNames: names,
-        previousOrders,
+        previousOrders: focused.previousOrders,
         occasionByDesign,
         companiesTotal: companies.length,
       })
@@ -899,6 +933,8 @@ export function createApp(deps: Deps) {
       res.setHeader('Cache-Control', 'private, no-store')
       res.json({
         ...report,
+        focus: focused.scope,
+        facets,
         companies: {
           total: companies.length,
           newInPeriod,

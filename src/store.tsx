@@ -135,6 +135,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               quantity: order.quantity || 1,
               deliveryDate: order.deliveryDate || '',
               address: order.address || '',
+              deliveryCity: order.deliveryCity || '',
               notes: order.notes || '',
               headline: order.headline || '',
               subhead: order.subhead || '',
@@ -196,6 +197,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             productId: order.productId,
             quantity: order.quantity,
             deliveryDate: order.deliveryDate,
+            deliveryCity: order.deliveryCity || '',
             designId: designId ?? null,
           }),
         }).catch(() => undefined)

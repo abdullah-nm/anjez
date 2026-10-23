@@ -647,11 +647,12 @@ export class MetricsStore {
        ORDER BY requested_at ASC`,
     ).all(...companyArgs, from, to) as GenerationWindowRow[]
     const attempts = this.db.prepare(
-      `SELECT job_id, at, duration_ms, http_status, failure_code, model
+      `SELECT job_id, company_id, at, duration_ms, http_status, failure_code, model
        FROM provider_attempts
        WHERE ${companySql}at >= ? AND at <= ?`,
     ).all(...companyArgs, from, to) as {
       job_id: string
+      company_id: string
       at: number
       duration_ms: number
       http_status: number

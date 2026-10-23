@@ -49,6 +49,10 @@ export interface KnowledgeStore {
     passwordHash: string
   }): Promise<void>
   upsertCompany(id: string, name: string): Promise<void>
+  renameCompany(companyId: string, name: string): Promise<void>
+  updateUserName(userId: string, name: string): Promise<void>
+  sessionEpoch(userId: string): Promise<number>
+  bumpSessionEpoch(userId: string): Promise<void>
   upsertUser(input: {
     id: string
     companyId: string
@@ -242,6 +246,10 @@ export class SqliteStore implements KnowledgeStore {
       CREATE INDEX IF NOT EXISTS idx_audit_company ON audit_logs(company_id, at);
     `)
     this.keepCompanyAccounts()
+    const userColumns = new Set((this.db.prepare('PRAGMA table_info(users)').all() as { name: string }[]).map((column) => column.name))
+    if (!userColumns.has('session_epoch')) {
+      this.db.exec('ALTER TABLE users ADD COLUMN session_epoch INTEGER NOT NULL DEFAULT 0')
+    }
   }
 
   private keepCompanyAccounts() {
@@ -374,6 +382,23 @@ export class SqliteStore implements KnowledgeStore {
       `INSERT INTO companies (id, name, created_at) VALUES (?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET name = excluded.name`,
     ).run(id, name, new Date().toISOString())
+  }
+
+  async renameCompany(companyId: string, name: string) {
+    this.db.prepare('UPDATE companies SET name = ? WHERE id = ?').run(name, companyId)
+  }
+
+  async updateUserName(userId: string, name: string) {
+    this.db.prepare('UPDATE users SET name = ? WHERE id = ?').run(name, userId)
+  }
+
+  async sessionEpoch(userId: string) {
+    const row = this.db.prepare('SELECT session_epoch FROM users WHERE id = ?').get(userId) as { session_epoch: number } | undefined
+    return row?.session_epoch ?? 0
+  }
+
+  async bumpSessionEpoch(userId: string) {
+    this.db.prepare('UPDATE users SET session_epoch = session_epoch + 1 WHERE id = ?').run(userId)
   }
 
   async upsertUser(input: {
@@ -833,6 +858,23 @@ class PostgresStore implements KnowledgeStore {
        ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name`,
       [id, name],
     )
+  }
+
+  async renameCompany(companyId: string, name: string) {
+    await this.pool.query('UPDATE companies SET name = $1 WHERE id = $2', [name, companyId])
+  }
+
+  async updateUserName(userId: string, name: string) {
+    await this.pool.query('UPDATE users SET name = $1 WHERE id = $2', [name, userId])
+  }
+
+  async sessionEpoch(userId: string) {
+    const { rows } = await this.pool.query('SELECT session_epoch FROM users WHERE id = $1', [userId])
+    return Number(rows[0]?.session_epoch ?? 0)
+  }
+
+  async bumpSessionEpoch(userId: string) {
+    await this.pool.query('UPDATE users SET session_epoch = session_epoch + 1 WHERE id = $1', [userId])
   }
 
   async upsertUser(input: {

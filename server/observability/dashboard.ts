@@ -1,3 +1,4 @@
+import { groupCity } from '../../shared/cities.ts'
 import type { GenerationStatus, GenerationWindowRow } from './metrics.ts'
 import { occasionByKey } from '../platform/occasions.ts'
 
@@ -17,6 +18,27 @@ export function changeRatio(current: number, previous: number) {
 export function riyadhDayStart(now: number) {
   const shifted = new Date(now + RIYADH_OFFSET_MS)
   return Date.UTC(shifted.getUTCFullYear(), shifted.getUTCMonth(), shifted.getUTCDate()) - RIYADH_OFFSET_MS
+}
+
+export function riyadhDate(ms: number) {
+  const shifted = new Date(ms + RIYADH_OFFSET_MS)
+  const month = String(shifted.getUTCMonth() + 1).padStart(2, '0')
+  const day = String(shifted.getUTCDate()).padStart(2, '0')
+  return `${shifted.getUTCFullYear()}-${month}-${day}`
+}
+
+export function riyadhDays(from: number, to: number) {
+  const first = riyadhDayStart(from)
+  const last = riyadhDayStart(to)
+  const days: { start: number, end: number, day: string, partial: boolean }[] = []
+  for (let cursor = first; cursor <= last; cursor += DAY_MS) {
+    const dayEnd = cursor + DAY_MS
+    const start = Math.max(cursor, from)
+    const end = Math.min(dayEnd - 1, to)
+    if (start > end) continue
+    days.push({ start, end, day: riyadhDate(cursor + 60_000), partial: to < dayEnd - 1 })
+  }
+  return days
 }
 
 export function parseDashboardRange(input: {
@@ -53,6 +75,7 @@ export function isDisplayableSvg(value: string) {
 
 export type AttemptRow = {
   job_id: string
+  company_id?: string
   at: number
   duration_ms: number
   http_status: number
@@ -70,9 +93,104 @@ export type PrintOrderRow = {
   status: string
   quantity: number
   deliveryDate: string
+  deliveryCity?: string | null
   designId: string | null
   createdAt: string
   occasionKey?: string | null
+}
+
+export type DashboardFocus = {
+  companyId?: string | null
+  /** Undefined means the city filter is off. An empty string selects «غير محدد». */
+  cityKey?: string
+  /** Undefined means the occasion filter is off. Null selects «غير محدد». */
+  occasionKey?: string | null
+}
+
+export function applyDashboardFocus<Live extends { id: string }>(input: {
+  focus: DashboardFocus
+  orders: PrintOrderRow[]
+  previousOrders: PrintOrderRow[]
+  jobs: GenerationWindowRow[]
+  previousJobs: GenerationWindowRow[]
+  attempts: AttemptRow[]
+  live: Live[]
+  occasionByDesign?: Map<string, string | null>
+}) {
+  const companyId = input.focus.companyId?.trim() || null
+  const hasCity = input.focus.cityKey !== undefined
+  const cityKey = hasCity ? input.focus.cityKey : undefined
+  const hasOccasion = input.focus.occasionKey !== undefined
+  const occasionKey = hasOccasion ? input.focus.occasionKey ?? null : undefined
+  const orderOk = (order: PrintOrderRow) => {
+    if (companyId && order.companyId !== companyId) return false
+    if (hasCity && groupCity(order.deliveryCity).key !== cityKey) return false
+    if (hasOccasion && (order.occasionKey ?? null) !== occasionKey) return false
+    return true
+  }
+  const jobOccasion = (job: GenerationWindowRow) => (
+    job.design_id ? input.occasionByDesign?.get(job.design_id) ?? null : null
+  )
+  const jobOk = (job: GenerationWindowRow) => {
+    if (companyId && job.company_id !== companyId) return false
+    if (hasOccasion && jobOccasion(job) !== occasionKey) return false
+    return true
+  }
+  const orders = input.orders.filter(orderOk)
+  const previousOrders = input.previousOrders.filter(orderOk)
+  const jobs = input.jobs.filter(jobOk)
+  const previousJobs = input.previousJobs.filter(jobOk)
+  const jobIds = new Set(jobs.map((job) => job.id))
+  const generationScoped = Boolean(companyId || hasOccasion)
+  const attempts = generationScoped
+    ? input.attempts.filter((attempt) => {
+        if (companyId && attempt.company_id && attempt.company_id !== companyId) return false
+        if (companyId && !attempt.company_id && !jobIds.has(attempt.job_id)) return false
+        if (hasOccasion && !jobIds.has(attempt.job_id)) return false
+        return true
+      })
+    : input.attempts
+  const live = generationScoped ? input.live.filter((item) => jobIds.has(item.id)) : input.live
+  return {
+    orders,
+    previousOrders,
+    jobs,
+    previousJobs,
+    attempts,
+    live,
+    scope: {
+      company: Boolean(companyId),
+      city: hasCity,
+      occasion: hasOccasion,
+      citySkipsGenerations: hasCity,
+      companiesTotalUnaffected: true,
+    },
+  }
+}
+
+export function dashboardFacets(input: {
+  companies: { id: string; name: string }[]
+  orders: PrintOrderRow[]
+  jobs: GenerationWindowRow[]
+  occasionByDesign?: Map<string, string | null>
+}) {
+  const cities = new Map<string, string>()
+  for (const order of input.orders) {
+    const city = groupCity(order.deliveryCity)
+    cities.set(city.key, city.label)
+  }
+  const occasions = new Map<string, string>()
+  const addOccasion = (key: string | null | undefined) => {
+    const id = key || ''
+    if (!occasions.has(id)) occasions.set(id, key ? (occasionByKey(key)?.titleAr ?? key) : 'غير محدد')
+  }
+  for (const order of input.orders) addOccasion(order.occasionKey ?? null)
+  for (const job of input.jobs) addOccasion(job.design_id ? input.occasionByDesign?.get(job.design_id) ?? null : null)
+  return {
+    companies: [...input.companies].sort((left, right) => left.name.localeCompare(right.name, 'ar')),
+    cities: [...cities.entries()].map(([key, label]) => ({ key, label })).sort((left, right) => left.label.localeCompare(right.label, 'ar')),
+    occasions: [...occasions.entries()].map(([key, label]) => ({ key, label })).sort((left, right) => left.label.localeCompare(right.label, 'ar')),
+  }
 }
 
 function average(values: number[]) {
@@ -102,11 +220,46 @@ export function isCancelledOrder(status: string) {
   return status === 'ملغى' || status === 'ملغاة' || status === 'cancelled'
 }
 
-function riyadhDate(ms: number) {
-  const shifted = new Date(ms + RIYADH_OFFSET_MS)
-  const month = String(shifted.getUTCMonth() + 1).padStart(2, '0')
-  const day = String(shifted.getUTCDate()).padStart(2, '0')
-  return `${shifted.getUTCFullYear()}-${month}-${day}`
+function savedOrderAt(order: { status: string, createdAt: string }, start: number, end: number) {
+  if (isCancelledOrder(order.status)) return false
+  const at = Date.parse(order.createdAt)
+  return Number.isFinite(at) && at >= start && at <= end
+}
+
+export function activityTrend(input: {
+  from: number
+  to: number
+  jobs: { status: string, requested_at: number }[]
+  orders: { status: string, createdAt: string }[]
+}) {
+  return riyadhDays(input.from, input.to).map((day) => ({
+    day: day.day,
+    succeeded: input.jobs.filter((job) => job.status === 'succeeded' && job.requested_at >= day.start && job.requested_at <= day.end).length,
+    orders: input.orders.filter((order) => savedOrderAt(order, day.start, day.end)).length,
+    partial: day.partial,
+  }))
+}
+
+export function orderTrend(input: {
+  from: number
+  to: number
+  previousFrom: number
+  previousTo: number
+  orders: { status: string, createdAt: string }[]
+  previousOrders: { status: string, createdAt: string }[]
+}) {
+  const current = riyadhDays(input.from, input.to)
+  const previousEnd = input.previousTo > input.previousFrom ? input.previousTo - 1 : input.previousTo
+  const previous = riyadhDays(input.previousFrom, previousEnd)
+  return current.map((day, index) => ({
+    day: day.day,
+    orders: input.orders.filter((order) => savedOrderAt(order, day.start, day.end)).length,
+    partial: day.partial,
+    previousOrders: previous[index]
+      ? input.previousOrders.filter((order) => savedOrderAt(order, previous[index].start, previous[index].end)).length
+      : null,
+    previousDay: previous[index]?.day ?? null,
+  }))
 }
 
 type BoardJob = {
@@ -130,6 +283,7 @@ export function activityBoard(input: {
   orders: PrintOrderRow[]
   previousOrders: PrintOrderRow[]
   occasionByDesign?: Map<string, string | null>
+  companyNames?: Map<string, string>
 }) {
   const inWindow = (at: number) => at >= input.previousFrom && at < input.previousTo
   const inCurrent = (at: number) => at >= input.from && at <= input.to
@@ -163,8 +317,10 @@ export function activityBoard(input: {
     day,
     statuses: [...bucket.entries()].map(([status, count]) => ({ status, count })),
   }))
+  const savedOrders = input.orders.filter((order) => !isCancelledOrder(order.status))
+  const previousSaved = input.previousOrders.filter((order) => !isCancelledOrder(order.status))
   const products = new Map<string, { orders: number, quantity: number }>()
-  for (const order of input.orders) {
+  for (const order of savedOrders) {
     const current = products.get(order.productId) ?? { orders: 0, quantity: 0 }
     current.orders += 1
     current.quantity += Number.isFinite(order.quantity) ? order.quantity : 0
@@ -189,7 +345,39 @@ export function activityBoard(input: {
     occasions.set(id, current)
   }
   for (const job of succeededJobs) bump(occasionFor(job.design_id, undefined), 'generations')
-  for (const order of input.orders) bump(order.occasionKey === undefined ? occasionFor(order.designId, undefined) : order.occasionKey, 'orders')
+  for (const order of savedOrders) bump(order.occasionKey === undefined ? occasionFor(order.designId, undefined) : order.occasionKey, 'orders')
+  const companyActivity = new Map<string, { name: string, generations: number, orders: number }>()
+  const touchCompany = (companyId: string | undefined, name: string | undefined) => {
+    if (!companyId) return null
+    const current = companyActivity.get(companyId) ?? { name: input.companyNames?.get(companyId) || name || companyId, generations: 0, orders: 0 }
+    if (name && current.name === companyId) current.name = name
+    companyActivity.set(companyId, current)
+    return current
+  }
+  for (const job of succeededJobs) {
+    const row = touchCompany(job.company_id, undefined)
+    if (row) row.generations += 1
+  }
+  for (const order of savedOrders) {
+    const row = touchCompany(order.companyId, order.companyName)
+    if (row) row.orders += 1
+  }
+  const rankedCompanies = [...companyActivity.entries()].map(([companyId, value]) => ({
+    companyId,
+    name: value.name,
+    orders: value.orders,
+  })).filter((row) => row.orders > 0).sort((left, right) => right.orders - left.orders || left.name.localeCompare(right.name, 'ar'))
+  const leadingOrders = rankedCompanies[0]?.orders ?? 0
+  const leaders = rankedCompanies.filter((row) => row.orders === leadingOrders)
+  const cityCounts = new Map<string, { label: string, orders: number }>()
+  for (const order of savedOrders) {
+    const city = groupCity(order.deliveryCity)
+    const current = cityCounts.get(city.key) ?? { label: city.label, orders: 0 }
+    current.orders += 1
+    cityCounts.set(city.key, current)
+  }
+  const covered = riyadhDays(input.from, input.to)
+  const previousSucceeded = input.previousJobs.filter((job) => job.status === 'succeeded').length
   const durations = succeededJobs.map((job) => job.generation_duration_ms).filter((value): value is number => value !== null)
   return {
     companiesTotal: input.companiesTotal,
@@ -211,6 +399,30 @@ export function activityBoard(input: {
       label: item.key ? (occasionByKey(item.key)?.titleAr ?? item.key) : 'غير محدد',
     })).sort((left, right) => (right.generations + right.orders) - (left.generations + left.orders)),
     generationsSucceeded: succeededJobs.length,
+    generationsChange: changeRatio(succeededJobs.length, previousSucceeded),
+    savedRequests: savedOrders.length,
+    savedRequestsChange: changeRatio(savedOrders.length, previousSaved.length),
+    calendarDays: covered.length,
+    averageDailyOrders: covered.length ? Number((savedOrders.length / covered.length).toFixed(2)) : null,
+    periodPartial: covered.some((day) => day.partial),
+    leaders,
+    leadersTied: leaders.length > 1,
+    cities: [...cityCounts.entries()].map(([key, value]) => ({
+      key,
+      label: value.label,
+      orders: value.orders,
+      ratio: savedOrders.length ? Number((value.orders / savedOrders.length).toFixed(4)) : 0,
+    })).sort((left, right) => right.orders - left.orders || left.label.localeCompare(right.label, 'ar')),
+    trend: activityTrend({ from: input.from, to: input.to, jobs: input.jobs, orders: input.orders }),
+    orderTrend: orderTrend({
+      from: input.from,
+      to: input.to,
+      previousFrom: input.previousFrom,
+      previousTo: input.previousTo,
+      orders: input.orders,
+      previousOrders: input.previousOrders,
+    }),
+    companyActivity: [...companyActivity.entries()].map(([companyId, value]) => ({ companyId, ...value })),
     generationsPerCompany: companiesThatGenerated.size ? Number((succeededJobs.length / companiesThatGenerated.size).toFixed(2)) : null,
     avgGenerationMs: average(durations),
   }
@@ -299,17 +511,166 @@ function tally(jobs: GenerationWindowRow[]) {
   }
 }
 
-export function orderNeedsFollowUp(order: PrintOrderRow, input: { now: number, followupHours: number, failedDesignIds: Set<string> }) {
-  const created = Date.parse(order.createdAt)
-  const ageMs = Number.isFinite(created) ? input.now - created : 0
+const FAILURE_LABEL: Record<string, string> = {
+  QUOTA: 'تجاوز حصة المزود',
+  TIMEOUT: 'انتهت مهلة التوليد',
+  INVALID_OUTPUT: 'النتيجة غير صالحة للعرض',
+  IMAGE_RATE_LIMITED: 'تجاوز حد الصور',
+  COMPOSE_RATE_LIMIT: 'تجاوز حد التوليد',
+  FAILED: 'فشل التوليد',
+  INVALID: 'طلب غير صالح لدى المزود',
+}
+
+export function failureLabel(code: string | null | undefined) {
+  if (!code) return 'فشل التوليد'
+  return FAILURE_LABEL[code] || 'فشل التوليد'
+}
+
+const SAME_CLOCK_MS = 250
+
+type PerformanceJob = {
+  id: string
+  company_id: string
+  status: string
+  requested_at: number
+  finished_at?: number | null
+  api_duration_ms: number | null
+  generation_duration_ms: number | null
+  failure_code: string | null
+  http_status?: number | null
+}
+
+export function generationPerformance(input: {
+  from: number
+  to: number
+  jobs: PerformanceJob[]
+  attempts: { job_id: string, failure_code: string | null }[]
+}) {
+  const succeeded = input.jobs.filter((job) => job.status === 'succeeded')
+  const failed = input.jobs.filter((job) => job.status === 'failed')
+  const timedOut = input.jobs.filter((job) => job.status === 'timeout')
+  const inProgress = input.jobs.filter((job) => job.status === 'queued' || job.status === 'running')
+  const finished = input.jobs.filter((job) => job.status !== 'queued' && job.status !== 'running')
+  const decided = succeeded.length + failed.length + timedOut.length
+  const apiSamples = finished.map((job) => job.api_duration_ms).filter((value): value is number => value !== null)
+  const generationSamples = succeeded.map((job) => job.generation_duration_ms).filter((value): value is number => value !== null)
+  const paired = input.jobs.filter((job) => job.api_duration_ms !== null && job.generation_duration_ms !== null)
+  const sameMeasurement = paired.length > 0 && paired.every((job) => Math.abs((job.api_duration_ms ?? 0) - (job.generation_duration_ms ?? 0)) <= SAME_CLOCK_MS)
+  const reasons = new Map<string, number>()
+  for (const job of [...failed, ...timedOut]) {
+    const code = job.failure_code || (job.status === 'timeout' ? 'TIMEOUT' : 'FAILED')
+    reasons.set(code, (reasons.get(code) || 0) + 1)
+  }
+  const outcomes = [
+    { status: 'succeeded', label: 'ناجحة', count: succeeded.length },
+    { status: 'failed', label: 'فاشلة', count: failed.length },
+    { status: 'timeout', label: 'مهلة', count: timedOut.length },
+  ].filter((item) => item.count > 0)
+  return {
+    started: input.jobs.length,
+    succeeded: succeeded.length,
+    failed: failed.length,
+    timedOut: timedOut.length,
+    inProgress: inProgress.length,
+    decided,
+    successRate: decided === 0 ? null : Number((succeeded.length / decided).toFixed(4)),
+    avgApiMs: average(apiSamples),
+    p95ApiMs: percentile95(apiSamples),
+    avgGenerationMs: average(generationSamples),
+    sameMeasurement,
+    providerCalls: input.attempts.length,
+    failures: [...reasons.entries()].map(([code, count]) => ({ code, label: failureLabel(code), count })).sort((left, right) => right.count - left.count),
+    responseTrend: riyadhDays(input.from, input.to).flatMap((day) => {
+      const samples = finished.filter((job) => job.api_duration_ms !== null && job.requested_at >= day.start && job.requested_at <= day.end).map((job) => job.api_duration_ms as number)
+      if (!samples.length) return []
+      return [{ day: day.day, avgMs: average(samples), partial: day.partial }]
+    }),
+    outcomes,
+  }
+}
+
+export type AttentionItem = {
+  id: string
+  kind: 'order' | 'generation' | 'provider'
+  companyId: string | null
+  companyName: string
+  subject: string
+  reason: string
+  at: string
+}
+
+export function adminAttention(input: {
+  now: number
+  orders: PrintOrderRow[]
+  jobs: PerformanceJob[]
+  attempts: { job_id: string, company_id?: string, at: number, failure_code: string | null }[]
+  companyNames?: Map<string, string>
+  failedDesignIds: Set<string>
+}) {
+  const nameOf = (companyId: string | null | undefined, fallback?: string) => {
+    if (companyId && input.companyNames?.get(companyId)) return input.companyNames.get(companyId) as string
+    return fallback || '—'
+  }
+  const orders = input.orders.flatMap((order) => {
+    const reason = orderNeedsFollowUp(order, { now: input.now, failedDesignIds: input.failedDesignIds })
+    if (!reason) return []
+    const item: AttentionItem = {
+      id: order.id,
+      kind: 'order',
+      companyId: order.companyId ?? null,
+      companyName: nameOf(order.companyId, order.companyName),
+      subject: order.id,
+      reason,
+      at: order.createdAt,
+    }
+    return [item]
+  })
+  const generations = input.jobs.filter((job) => job.status === 'failed' || job.status === 'timeout').map((job) => ({
+    id: job.id,
+    kind: 'generation' as const,
+    companyId: job.company_id,
+    companyName: nameOf(job.company_id),
+    subject: job.id,
+    reason: failureLabel(job.failure_code || (job.status === 'timeout' ? 'TIMEOUT' : 'FAILED')),
+    at: new Date(job.finished_at ?? job.requested_at).toISOString(),
+  }))
+  const providerGroups = new Map<string, { attempts: number, jobs: Set<string>, companies: Set<string>, latest: number }>()
+  for (const attempt of input.attempts) {
+    if (!attempt.failure_code) continue
+    const current = providerGroups.get(attempt.failure_code) ?? { attempts: 0, jobs: new Set<string>(), companies: new Set<string>(), latest: 0 }
+    current.attempts += 1
+    current.jobs.add(attempt.job_id)
+    if (attempt.company_id) current.companies.add(attempt.company_id)
+    current.latest = Math.max(current.latest, attempt.at)
+    providerGroups.set(attempt.failure_code, current)
+  }
+  const providers = [...providerGroups.entries()].flatMap(([code, group]) => {
+    if (group.attempts < 2) return []
+    const companies = [...group.companies]
+    const label = failureLabel(code)
+    const calls = group.attempts === 1 ? 'استدعاء واحد' : `${group.attempts} استدعاءات`
+    const operations = group.jobs.size === 1 ? 'عملية واحدة' : `${group.jobs.size} عمليات`
+    const item: AttentionItem = {
+      id: `provider-${code}`,
+      kind: 'provider',
+      companyId: companies.length === 1 ? companies[0] : null,
+      companyName: companies.length === 1 ? nameOf(companies[0]) : 'عدة شركات',
+      subject: label,
+      reason: `${label} في ${calls} على ${operations}`,
+      at: new Date(group.latest).toISOString(),
+    }
+    return [item]
+  })
+  return [...orders, ...generations, ...providers].sort((left, right) => right.at.localeCompare(left.at))
+}
+
+export function orderNeedsFollowUp(order: PrintOrderRow, input: { now: number, failedDesignIds: Set<string> }) {
+  if (isCancelledOrder(order.status) || order.status === COMPLETE_ORDER_STATUS) return null
   if (order.designId && input.failedDesignIds.has(order.designId)) {
     return 'التوليد المرتبط بهذا الطلب فشل أو انتهت مهلته'
   }
-  const today = new Date(input.now + RIYADH_OFFSET_MS).toISOString().slice(0, 10)
-  if (order.deliveryDate < today) return 'تجاوز تاريخ التسليم المطلوب'
-  if (order.status === 'محفوظ' && !order.designId && ageMs >= input.followupHours * 60 * 60 * 1000) {
-    return `ما زال محفوظًا دون تصميم مرتبط منذ أكثر من ${input.followupHours} ساعة`
-  }
+  const today = riyadhDate(input.now)
+  if (order.deliveryDate && order.deliveryDate < today) return `تجاوز تاريخ التسليم المطلوب ${order.deliveryDate}`
   return null
 }
 
@@ -359,7 +720,7 @@ export function buildDashboard(input: {
   }
   const failedDesignIds = new Set(input.jobs.filter((job) => job.design_id && (job.status === 'failed' || job.status === 'timeout')).map((job) => job.design_id as string))
   const followed = input.orders.flatMap((order) => {
-    const reason = orderNeedsFollowUp(order, { now: input.now, followupHours: input.followupHours, failedDesignIds })
+    const reason = orderNeedsFollowUp(order, { now: input.now, failedDesignIds })
     if (!reason) return []
     const created = Date.parse(order.createdAt)
     const ageHours = Number.isFinite(created) ? Math.max(0, Math.round((input.now - created) / 3_600_000)) : 0
@@ -474,6 +835,16 @@ export function buildDashboard(input: {
       orders: input.orders,
       previousOrders: input.previousOrders ?? [],
       occasionByDesign: input.occasionByDesign,
+      companyNames: input.companyNames,
+    }),
+    performance: generationPerformance({ from: input.from, to: input.to, jobs: input.jobs, attempts: input.attempts }),
+    attention: adminAttention({
+      now: input.now,
+      orders: input.orders,
+      jobs: input.jobs,
+      attempts: input.attempts,
+      companyNames: input.companyNames,
+      failedDesignIds,
     }),
   }
 }

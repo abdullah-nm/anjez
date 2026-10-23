@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { formatDate, productById } from '../data'
+import { draftHasWork, prefillFromOccasion } from '../occasionPrefill'
 import { useStore } from '../store'
 import { useAuth } from '../auth'
 
@@ -13,6 +14,7 @@ type LiveEvent = {
   reminderDays: number[]
   scope: 'company' | 'system'
   dateCertainty?: string
+  occasionKey?: string | null
 }
 
 function remaining(ymd: string) {
@@ -46,7 +48,11 @@ export function Dashboard() {
         const eventsPayload = await eventsResponse.json()
         const notesPayload = await notesResponse.json()
         if (cancelled) return
-        const company = (eventsPayload.events || []).map((event: LiveEvent) => ({ ...event, scope: 'company' as const }))
+        const company = (eventsPayload.events || []).map((event: LiveEvent) => ({
+          ...event,
+          audience: event.audience || '',
+          scope: 'company' as const,
+        }))
         const system = (eventsPayload.systemOccasions || []).filter((event: { date: string | null }) => event.date).map((event: {
           id: string
           title?: string
@@ -78,21 +84,32 @@ export function Dashboard() {
     }
   }, [user, loadKey])
 
-  function openStudio(productId: string, event: LiveEvent) {
-    const product = productById(productId)
-    if (!product || !event.date) return
-    const system = event.scope === 'system'
-    setDraft({
-      ...draft,
-      productId,
-      eventId: system ? '' : event.id,
-      eventTitle: event.title,
-      size: product.sizes[0],
-      headline: event.title,
-      subhead: '',
-      body: '',
+  function openStudio(event: LiveEvent) {
+    const next = prefillFromOccasion({
+      id: event.id,
+      title: event.title,
+      date: event.date,
+      dateOfficial: event.dateCertainty === 'official',
+      audience: event.audience,
+      category: event.category,
+      companyName: user?.companyName || '',
     })
-    navigate(system ? '/studio' : `/studio?eventId=${event.id}`)
+    const product = productById(next.productId) ?? productById('prd-poster')
+    if (!product) return
+    if (draftHasWork(draft) && draft.eventId !== event.id) {
+      const replace = window.confirm('يوجد نص أو معاينة غير محفوظة في الاستوديو. هل تستبدلها ببيانات هذه المناسبة؟')
+      if (!replace) return
+    }
+    setDraft({
+      productId: product.id,
+      eventId: event.id,
+      eventTitle: next.eventTitle,
+      size: product.sizes[0],
+      headline: next.headline,
+      subhead: next.subhead,
+      body: next.body,
+    })
+    navigate(`/studio?eventId=${encodeURIComponent(event.id)}`, { state: { prefill: next } })
   }
 
   const upcoming = liveEvents
@@ -132,8 +149,7 @@ export function Dashboard() {
           {upcoming.map((event) => {
             if (!event.date) return null
             const days = remaining(event.date)
-            const productId = event.category === 'national' || event.category === 'islamic' ? 'prd-poster' : 'prd-invite'
-            const product = productById(productId)
+            const product = productById(event.category === 'national' || event.category === 'islamic' || event.category === 'season' ? 'prd-poster' : 'prd-invite')
             return (
               <article key={event.id} className="card event-card">
                 <p className="eyebrow">{formatDate(event.date)}</p>
@@ -146,7 +162,7 @@ export function Dashboard() {
                   {event.reminderDays.length ? ` · تذكير قبل ${event.reminderDays.join('، ')} يوم` : ' · بلا تذكير قبل التأكيد'}
                   {' · مقترح: '}{product?.name}
                 </p>
-                <button type="button" className="btn btn-secondary" onClick={() => openStudio(productId, event)}>
+                <button type="button" className="btn btn-secondary" onClick={() => openStudio(event)}>
                   صمم لهذه المناسبة
                 </button>
               </article>

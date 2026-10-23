@@ -1,6 +1,7 @@
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
+import { storedCity } from '../../shared/cities.ts'
 import { newId } from '../lib/crypto.ts'
 import { AppError } from '../lib/errors.ts'
 import type { BrandProfile, CalendarSyncState, CompanyEventRecord, DateCertainty, DesignRecord, DesignStatus, NotificationRecord, SystemOccasionRecord } from './types.ts'
@@ -103,6 +104,7 @@ export class PlatformStore {
         status TEXT NOT NULL,
         quantity INTEGER NOT NULL,
         delivery_date TEXT NOT NULL,
+        delivery_city TEXT NOT NULL DEFAULT '',
         design_id TEXT,
         created_at TEXT NOT NULL,
         PRIMARY KEY (company_id, id)
@@ -122,6 +124,7 @@ export class PlatformStore {
       CREATE INDEX IF NOT EXISTS idx_notes_user ON notifications(company_id, user_id, created_at);
     `)
     this.migrateEvents()
+    this.migrateOrders()
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS reminder_deliveries (
         id TEXT PRIMARY KEY,
@@ -164,6 +167,12 @@ export class PlatformStore {
       );
     `)
     this.migrateReminders()
+  }
+
+  private migrateOrders() {
+    const info = this.db.prepare('PRAGMA table_info(print_orders)').all() as { name: string }[]
+    if (!info.length || info.some((column) => column.name === 'delivery_city')) return
+    this.db.exec(`ALTER TABLE print_orders ADD COLUMN delivery_city TEXT NOT NULL DEFAULT ''`)
   }
 
   private migrateReminders() {
@@ -360,14 +369,15 @@ export class PlatformStore {
     productId: string
     quantity: number
     deliveryDate: string
+    deliveryCity?: string | null
     designId: string | null
     createdAt: string
   }) {
     requireCompany(input.companyId)
     this.db.prepare(
       `INSERT OR IGNORE INTO print_orders (
-        company_id, id, user_id, user_name, product_id, status, quantity, delivery_date, design_id, created_at
-      ) VALUES (?, ?, ?, ?, ?, 'محفوظ', ?, ?, ?, ?)`,
+        company_id, id, user_id, user_name, product_id, status, quantity, delivery_date, delivery_city, design_id, created_at
+      ) VALUES (?, ?, ?, ?, ?, 'محفوظ', ?, ?, ?, ?, ?)`,
     ).run(
       input.companyId,
       input.id,
@@ -376,6 +386,7 @@ export class PlatformStore {
       input.productId,
       input.quantity,
       input.deliveryDate,
+      storedCity(input.deliveryCity),
       input.designId,
       input.createdAt,
     )
@@ -384,7 +395,7 @@ export class PlatformStore {
   listOrdersForAccount(companyId: string, userId: string) {
     requireCompany(companyId)
     return this.db.prepare(
-      `SELECT id, user_id, user_name, product_id, status, quantity, delivery_date, design_id, created_at
+      `SELECT id, user_id, user_name, product_id, status, quantity, delivery_date, delivery_city, design_id, created_at
        FROM print_orders
        WHERE company_id = ? AND user_id = ?
        ORDER BY created_at DESC`,
@@ -396,6 +407,7 @@ export class PlatformStore {
       status: string
       quantity: number
       delivery_date: string
+      delivery_city: string
       design_id: string | null
       created_at: string
     }[]
@@ -404,7 +416,7 @@ export class PlatformStore {
   listPrintOrders(companyId: string, fromIso: string, toIso: string) {
     requireCompany(companyId)
     return this.db.prepare(
-      `SELECT id, user_id, user_name, product_id, status, quantity, delivery_date, design_id, created_at
+      `SELECT id, user_id, user_name, product_id, status, quantity, delivery_date, delivery_city, design_id, created_at
        FROM print_orders
        WHERE company_id = ? AND created_at >= ? AND created_at <= ?
        ORDER BY created_at DESC`,
@@ -415,6 +427,7 @@ export class PlatformStore {
       status: string
       quantity: number
       delivery_date: string
+      delivery_city: string
       design_id: string | null
       created_at: string
       user_id: string
@@ -446,7 +459,7 @@ export class PlatformStore {
 
   listPrintOrdersBetween(fromIso: string, toIso: string) {
     return this.db.prepare(
-      `SELECT company_id, id, user_id, user_name, product_id, status, quantity, delivery_date, design_id, created_at
+      `SELECT company_id, id, user_id, user_name, product_id, status, quantity, delivery_date, delivery_city, design_id, created_at
        FROM print_orders
        WHERE created_at >= ? AND created_at <= ?
        ORDER BY created_at DESC`,
@@ -459,6 +472,7 @@ export class PlatformStore {
       status: string
       quantity: number
       delivery_date: string
+      delivery_city: string
       design_id: string | null
       created_at: string
     }[]

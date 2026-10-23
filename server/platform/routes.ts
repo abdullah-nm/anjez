@@ -134,7 +134,55 @@ export function registerPlatformRoutes(
         updatedAt: new Date().toISOString(),
       }
       deps.platform.upsertBrand(next)
-      res.json({ brand: next })
+      if (next.companyName !== user.companyName) await deps.store.renameCompany(user.companyId, next.companyName)
+      res.json({ brand: next, user: await publicAccount(deps.store, user.id) })
+    } catch (error) {
+      next(error)
+    }
+  })
+
+  app.get('/api/account', async (req, res, next) => {
+    try {
+      const user = await deps.requireUser(req)
+      const fresh = await deps.store.getUserById(user.id)
+      if (!fresh) throw new AppError('يلزم تسجيل الدخول.', 401, 'UNAUTHENTICATED')
+      res.json({
+        name: fresh.name,
+        email: fresh.email,
+        companyName: fresh.companyName,
+        companyId: fresh.companyId,
+        role: fresh.role,
+        canEditCompany: await canEditCompanyBrand(deps.store, fresh),
+      })
+    } catch (error) {
+      next(error)
+    }
+  })
+
+  app.patch('/api/account', async (req, res, next) => {
+    try {
+      const user = await deps.requireUser(req)
+      const body = z.object({
+        name: z.string().trim().min(2).max(80),
+        companyName: z.string().trim().min(2).max(80).optional(),
+      }).parse(req.body ?? {})
+      if (body.companyName !== undefined && !(await canEditCompanyBrand(deps.store, user))) {
+        throw new AppError('تعديل اسم الشركة متاح لحساب الشركة.', 403, 'FORBIDDEN')
+      }
+      await deps.store.updateUserName(user.id, body.name)
+      if (body.companyName !== undefined) {
+        await deps.store.renameCompany(user.companyId, body.companyName)
+        const brand = ensureBrand(deps.platform, user)
+        deps.platform.upsertBrand({
+          ...brand,
+          companyName: body.companyName,
+          contactName: body.name,
+          updatedAt: new Date().toISOString(),
+        })
+      }
+      const fresh = await publicAccount(deps.store, user.id)
+      if (!fresh) throw new AppError('يلزم تسجيل الدخول.', 401, 'UNAUTHENTICATED')
+      res.json({ user: fresh })
     } catch (error) {
       next(error)
     }
@@ -367,6 +415,7 @@ export function registerPlatformRoutes(
           productId: order.product_id,
           quantity: order.quantity,
           deliveryDate: order.delivery_date,
+          deliveryCity: order.delivery_city,
           status: order.status,
           designId: order.design_id,
         })),
@@ -384,6 +433,7 @@ export function registerPlatformRoutes(
         productId: z.string().trim().min(1).max(40),
         quantity: z.number().int().min(1).max(100000),
         deliveryDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+        deliveryCity: z.string().trim().max(80).optional(),
         designId: z.string().regex(/^des_[a-f0-9]+$/).nullable().optional(),
       }).parse(req.body ?? {})
       const linked = body.designId ? deps.platform.getDesign(user.companyId, body.designId) : null
@@ -397,6 +447,7 @@ export function registerPlatformRoutes(
         productId: body.productId,
         quantity: body.quantity,
         deliveryDate: body.deliveryDate,
+        deliveryCity: body.deliveryCity,
         designId,
         createdAt,
       })
@@ -698,6 +749,19 @@ export function registerPlatformRoutes(
       next(error)
     }
   })
+}
+
+async function publicAccount(store: KnowledgeStore, userId: string) {
+  const user = await store.getUserById(userId)
+  if (!user) return null
+  return {
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    companyId: user.companyId,
+    companyName: user.companyName,
+    role: user.role,
+  }
 }
 
 function sessionEvent(platform: PlatformStore, companyId: string, eventId?: string | null) {

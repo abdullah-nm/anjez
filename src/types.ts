@@ -75,6 +75,7 @@ export interface PrintOrder {
   quantity: number
   deliveryDate: string
   address: string
+  deliveryCity?: string
   notes: string
   headline: string
   subhead: string
