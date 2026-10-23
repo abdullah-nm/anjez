@@ -4,7 +4,7 @@ import express from 'express'
 import multer from 'multer'
 import { z } from 'zod'
 import { mkdirSync } from 'node:fs'
-import { SESSION_COOKIE, loginUser, requireRole, userFromRequest } from './auth.ts'
+import { SESSION_COOKIE, loginUser, registerCompany, requireRole, userFromRequest } from './auth.ts'
 import { readOriginal, removeOriginal, saveOriginal } from './lib/files.ts'
 import type { AppConfig } from './config.ts'
 import { providerStatus } from './config.ts'
@@ -25,11 +25,20 @@ import {
   metricContext,
   noteMetric,
 } from './observability/context.ts'
-import { featureForRoute, METRIC_WINDOWS, MetricsStore, type MetricsRecorder } from './observability/metrics.ts'
+import { runWithAttemptSink } from './observability/attempts.ts'
+import { buildDashboard, parseDashboardRange, type DashboardPreset } from './observability/dashboard.ts'
+import { featureForRoute, GENERATION_TIMEOUT_MS, isDisplayableImage, METRIC_WINDOWS, MetricsStore, type GenerationStatus, type MetricsRecorder } from './observability/metrics.ts'
 
 const loginSchema = z.object({
   email: z.string().optional().default(''),
   password: z.string().optional().default(''),
+})
+
+const registerSchema = z.object({
+  companyName: z.string().optional().default(''),
+  email: z.string().optional().default(''),
+  password: z.string().optional().default(''),
+  confirm: z.string().optional().default(''),
 })
 
 const askSchema = z
@@ -74,13 +83,15 @@ export function createApp(deps: Deps) {
   app.use(express.json({ limit: '1mb' }))
   app.use(cookieParser())
   const metrics = deps.metrics ?? new MetricsStore(deps.config.platformSqlitePath)
+  const generations = 'openGeneration' in metrics ? metrics as MetricsStore : null
+  const activeGenerations = new Set<string>()
   app.use((req, res, next) => {
     const started = process.hrtime.bigint()
     const ctx = freshMetricContext()
     metricContext.run(ctx, () => {
       res.on('finish', () => {
         try {
-          if (req.path === '/api/observability/summary') return
+          if (req.path.startsWith('/api/observability/')) return
           const companyId = metricCompany(req)
           if (!companyId) return
           const route = requestRoute(req)
@@ -129,6 +140,9 @@ export function createApp(deps: Deps) {
     llm: deps.llm,
     images,
     requireUser,
+    store: deps.store,
+    metrics: generations,
+    activeGenerations,
   })
 
   app.get('/api/health', (_req, res) => {
@@ -137,6 +151,30 @@ export function createApp(deps: Deps) {
       rag: providerStatus(deps.config),
       supportedFiles: SUPPORTED_EXTENSIONS,
     })
+  })
+
+  app.post('/api/register', async (req, res, next) => {
+    try {
+      if (req.body && typeof req.body === 'object' && 'role' in req.body) {
+        throw new AppError('إنشاء الحساب ينشئ حساب شركة فقط، ولا يمنح صلاحية الأدمن.', 400, 'ROLE_FORBIDDEN')
+      }
+      const body = registerSchema.parse(req.body ?? {})
+      const result = await registerCompany(deps.store, body, deps.config.sessionSecret, deps.config.sessionTtlMs)
+      res.cookie(SESSION_COOKIE, result.token, sessionCookieOptions(deps.config.sessionTtlMs))
+      attachMetricCompany(req, result.user.companyId)
+      await deps.store.audit({
+        actorUserId: result.user.id,
+        companyId: result.user.companyId,
+        action: 'auth.login',
+        targetType: 'user',
+        targetId: result.user.id,
+        ip: req.ip ?? null,
+        result: 'ok',
+      })
+      res.status(201).json({ user: publicUser(result.user), rag: providerStatus(deps.config) })
+    } catch (error) {
+      next(error)
+    }
   })
 
   app.post('/api/login', async (req, res, next) => {
@@ -149,12 +187,7 @@ export function createApp(deps: Deps) {
         deps.config.sessionSecret,
         deps.config.sessionTtlMs,
       )
-      res.cookie(SESSION_COOKIE, result.token, {
-        httpOnly: true,
-        sameSite: 'lax',
-        secure: false,
-        maxAge: deps.config.sessionTtlMs,
-      })
+      res.cookie(SESSION_COOKIE, result.token, sessionCookieOptions(deps.config.sessionTtlMs))
       attachMetricCompany(req, result.user.companyId)
       await deps.store.audit({
         actorUserId: result.user.id,
@@ -175,7 +208,7 @@ export function createApp(deps: Deps) {
     try {
       const user = await userFromRequest(deps.store, req, deps.config.sessionSecret)
       if (user) attachMetricCompany(req, user.companyId)
-      res.clearCookie(SESSION_COOKIE)
+      res.clearCookie(SESSION_COOKIE, { path: '/', sameSite: 'lax', httpOnly: true })
       if (user) {
         await deps.store.audit({
           actorUserId: user.id,
@@ -204,16 +237,58 @@ export function createApp(deps: Deps) {
   })
 
   app.post('/api/design/generate', async (req, res, next) => {
+    const started = Date.now()
+    let jobId: string | null = null
+    let generationStarted: number | null = null
+    let settled = false
+    const settle = (
+      status: 'succeeded' | 'failed' | 'timeout',
+      httpStatus: number,
+      failureCode: string | null,
+      preview: { mime: string, bytes: Buffer } | null,
+    ) => {
+      if (settled || !jobId || !generations) return
+      settled = true
+      activeGenerations.delete(jobId)
+      try {
+        generations.finishGeneration({
+          id: jobId,
+          status,
+          httpStatus,
+          apiDurationMs: Date.now() - started,
+          generationDurationMs: generationStarted === null ? null : Date.now() - generationStarted,
+          failureCode,
+          preview,
+        })
+      } catch (error) {
+        console.error(`generation record skipped: ${error instanceof Error ? error.name : 'error'}`)
+      }
+    }
     try {
       const user = await requireUser(req)
       noteMetric(res, { feature: 'design.image' })
       const body = designImageSchema.parse(req.body ?? {})
+      try {
+        jobId = generations?.openGeneration({ companyId: user.companyId, userName: user.name, userId: user.id, now: started }) ?? null
+      } catch (error) {
+        console.error(`generation record skipped: ${error instanceof Error ? error.name : 'error'}`)
+      }
+      if (jobId) activeGenerations.add(jobId)
       const now = Date.now()
       const recent = (imageRequests.get(user.id) ?? []).filter((time) => now - time < 10 * 60 * 1000)
       if (recent.length >= 3) {
+        settle('failed', 429, 'IMAGE_RATE_LIMITED', null)
         throw new AppError('وصلت للحد التجريبي: 3 صور كل 10 دقائق. حاول لاحقاً.', 429, 'IMAGE_RATE_LIMITED')
       }
       imageRequests.set(user.id, [...recent, now])
+      if (jobId) {
+        try {
+          generations?.markGenerationRunning(jobId)
+        } catch (error) {
+          console.error(`generation record skipped: ${error instanceof Error ? error.name : 'error'}`)
+        }
+      }
+      generationStarted = Date.now()
 
       const size: ImageSize =
         body.layout === 'portrait'
@@ -231,7 +306,33 @@ export function createApp(deps: Deps) {
       ].join('\n')
 
       try {
-        const imageDataUrl = await images.generate({ prompt, size })
+        const imageDataUrl = await runWithAttemptSink((attempt) => {
+          if (!jobId || !generations) return
+          try {
+            generations.recordProviderAttempt({
+              jobId,
+              companyId: user.companyId,
+              model: attempt.model,
+              httpStatus: attempt.httpStatus,
+              durationMs: attempt.durationMs,
+              failureCode: attempt.failureCode,
+            })
+          } catch (recordError) {
+            console.error(`generation record skipped: ${recordError instanceof Error ? recordError.name : 'error'}`)
+          }
+        }, () => images.generate({ prompt, size }))
+        const preview = previewFromDataUrl(imageDataUrl)
+        if (!preview) {
+          settle('failed', 422, 'INVALID_OUTPUT', null)
+          noteMetric(res, { feature: 'design.image', generateOk: false, errorClass: 'INVALID_OUTPUT' })
+          throw new AppError('اكتمل الرد دون صورة صالحة للعرض.', 422, 'INVALID_OUTPUT')
+        }
+        if (Date.now() - generationStarted >= GENERATION_TIMEOUT_MS) {
+          settle('timeout', 504, 'TIMEOUT', null)
+          throw new AppError('انتهت مهلة التوليد قبل اعتماد الصورة.', 504, 'IMAGE_TIMEOUT')
+        }
+        settle('succeeded', 200, null, preview)
+        noteMetric(res, { feature: 'design.image', generateOk: true })
         await deps.store.audit({
           actorUserId: user.id,
           companyId: user.companyId,
@@ -244,6 +345,16 @@ export function createApp(deps: Deps) {
         })
         res.json({ imageDataUrl, companyId: user.companyId })
       } catch (error) {
+        const code = error instanceof AppError ? error.code : 'IMAGE_GENERATION_UNAVAILABLE'
+        const httpStatus = error instanceof AppError ? error.status : 503
+        const elapsed = generationStarted === null ? 0 : Date.now() - generationStarted
+        const timedOut = code === 'IMAGE_TIMEOUT' || httpStatus === 504 || elapsed >= GENERATION_TIMEOUT_MS
+        settle(
+          timedOut ? 'timeout' : 'failed',
+          timedOut ? 504 : httpStatus,
+          timedOut ? 'TIMEOUT' : generationFailureCode(error),
+          null,
+        )
         await deps.store.audit({
           actorUserId: user.id,
           companyId: user.companyId,
@@ -255,12 +366,13 @@ export function createApp(deps: Deps) {
           extra: {
             promptChars: body.description.length,
             layout: body.layout,
-            errorCode: error instanceof AppError ? error.code : 'IMAGE_GENERATION_UNAVAILABLE',
+            errorCode: code,
           },
         })
         throw error
       }
     } catch (error) {
+      if (jobId) activeGenerations.delete(jobId)
       next(error)
     }
   })
@@ -573,6 +685,241 @@ export function createApp(deps: Deps) {
     }
   })
 
+  app.get('/api/observability/generations', async (req, res, next) => {
+    try {
+      const user = await requireUser(req)
+      if (user.role !== 'admin') {
+        throw new AppError('صلاحية غير كافية لعرض مراقبة التوليد.', 403, 'FORBIDDEN')
+      }
+      const rawWindow = req.query.window
+      const rawStatus = req.query.status
+      if ((rawWindow !== undefined && typeof rawWindow !== 'string') || (rawStatus !== undefined && typeof rawStatus !== 'string')) {
+        throw new AppError('معاملات التصفية غير صالحة.', 400, 'INVALID_FILTER')
+      }
+      const parsedWindow = z.enum(METRIC_WINDOWS).safeParse(rawWindow ?? '24h')
+      const parsedStatus = z.enum(['all', 'queued', 'running', 'succeeded', 'failed', 'timeout']).safeParse(rawStatus ?? 'all')
+      if (!parsedWindow.success || !parsedStatus.success) {
+        throw new AppError('معاملات التصفية غير صالحة.', 400, 'INVALID_FILTER')
+      }
+      if (!generations) {
+        res.json(emptyGenerationReport(parsedWindow.data))
+        return
+      }
+      const report = generations.generationReport({
+        companyId: user.companyId,
+        window: parsedWindow.data,
+        status: parsedStatus.data as GenerationStatus | 'all',
+        activeIds: [...activeGenerations],
+      })
+      res.json(report)
+    } catch (error) {
+      next(error)
+    }
+  })
+
+  app.get('/api/observability/generations/:id/preview', async (req, res, next) => {
+    try {
+      const user = await requireUser(req)
+      if (user.role !== 'admin') {
+        throw new AppError('صلاحية غير كافية لمعاينة نتيجة التوليد.', 403, 'FORBIDDEN')
+      }
+      const id = routeParam(req.params.id)
+      const file = generations?.readGenerationPreviewForAdmin(id)
+      if (!file) throw new AppError('لا توجد معاينة لهذه العملية.', 404, 'NOT_FOUND')
+      res.setHeader('Content-Type', file.mime)
+      res.setHeader('Cache-Control', 'private, max-age=60')
+      res.setHeader('X-Content-Type-Options', 'nosniff')
+      res.send(file.bytes)
+    } catch (error) {
+      next(error)
+    }
+  })
+
+  app.get('/api/observability/companies/:companyId', async (req, res, next) => {
+    try {
+      const user = await requireUser(req)
+      if (user.role !== 'admin') throw new AppError('صلاحية غير كافية لعرض شركات المنصة.', 403, 'FORBIDDEN')
+      const companyId = companyParam(req.params.companyId)
+      const companies = await deps.store.listPlatformCompanies()
+      const company = companies.find((item) => item.id === companyId)
+      if (!company) throw new AppError('الشركة غير موجودة.', 404, 'NOT_FOUND')
+      const orderTotals = deps.platform.orderCountsAll()
+      const designTotals = deps.platform.designCounts()
+      const generationTotals = generations?.generationCountsAll()
+      const orders = deps.platform.listPrintOrders(companyId, '1970-01-01T00:00:00.000Z', '9999-12-31T23:59:59.999Z').map((order) => ({
+        id: order.id,
+        userName: order.user_name,
+        productId: order.product_id,
+        status: order.status,
+        quantity: order.quantity,
+        deliveryDate: order.delivery_date,
+        designId: order.design_id,
+        createdAt: order.created_at,
+      }))
+      const window = generations?.generationWindow(companyId, 0, Date.now() + 60_000, [...activeGenerations]) ?? { jobs: [], attempts: [], live: [] }
+      const designs = deps.platform.listDesigns(companyId).map((design) => ({
+        id: design.id,
+        productId: design.productId,
+        status: design.status,
+        createdAt: design.createdAt,
+      }))
+      res.setHeader('Cache-Control', 'private, no-store')
+      res.json({
+        company: {
+          id: company.id,
+          name: company.name,
+          email: company.email,
+          createdAt: company.createdAt,
+          status: accountStatusLabel(company.status),
+          orders: orderTotals.get(company.id) ?? 0,
+          designs: designTotals.get(company.id) ?? 0,
+          generations: generationTotals?.get(company.id)?.total ?? 0,
+          succeeded: generationTotals?.get(company.id)?.succeeded ?? 0,
+        },
+        orders,
+        designs,
+        generations: window.jobs
+          .slice()
+          .sort((left, right) => right.requested_at - left.requested_at)
+          .map((job) => ({
+            id: job.id,
+            companyId: job.company_id,
+            companyName: company.name,
+            userName: job.user_name,
+            kind: job.kind === 'compose' ? 'compose' : 'image',
+            orderId: job.order_id,
+            designId: job.design_id,
+            requestedAt: new Date(job.requested_at).toISOString(),
+            startedAt: job.started_at ? new Date(job.started_at).toISOString() : null,
+            finishedAt: job.finished_at ? new Date(job.finished_at).toISOString() : null,
+            httpStatus: job.http_status,
+            status: job.status,
+            providerDurationMs: job.provider_duration_ms,
+            generationDurationMs: job.generation_duration_ms,
+            providerAttempts: job.provider_attempts,
+            failureCode: job.failure_code,
+            backgroundStage: job.background_stage,
+            previewUrl: job.status === 'succeeded' && job.preview_mime ? `/api/observability/generations/${job.id}/preview` : null,
+          })),
+      })
+    } catch (error) {
+      next(error)
+    }
+  })
+
+  app.get('/api/observability/dashboard', async (req, res, next) => {
+    try {
+      const user = await requireUser(req)
+      if (user.role !== 'admin') throw new AppError('صلاحية غير كافية لعرض لوحة المراقبة.', 403, 'FORBIDDEN')
+      const presetRaw = typeof req.query.preset === 'string' ? req.query.preset : '7d'
+      const fromRaw = typeof req.query.from === 'string' ? req.query.from : undefined
+      const toRaw = typeof req.query.to === 'string' ? req.query.to : undefined
+      const statusRaw = typeof req.query.status === 'string' ? req.query.status : 'all'
+      const preset = z.enum(['today', '7d', '30d', 'custom']).safeParse(presetRaw)
+      const status = z.enum(['all', 'queued', 'running', 'succeeded', 'failed', 'timeout']).safeParse(statusRaw)
+      if (!preset.success || !status.success || (req.query.from !== undefined && fromRaw === undefined) || (req.query.to !== undefined && toRaw === undefined)) {
+        throw new AppError('معاملات التصفية غير صالحة.', 400, 'INVALID_FILTER')
+      }
+      let range: ReturnType<typeof parseDashboardRange>
+      try {
+        range = parseDashboardRange({ preset: preset.data as DashboardPreset, from: fromRaw, to: toRaw })
+      } catch {
+        throw new AppError('الفترة المخصصة غير صالحة. اختر تاريخين ضمن 31 يومًا بتوقيت الرياض.', 400, 'INVALID_RANGE')
+      }
+      const companies = [...await deps.store.listPlatformCompanies()].sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+      const names = new Map(companies.map((company) => [company.id, company.name]))
+      const orderTotals = deps.platform.orderCountsAll()
+      const designTotals = deps.platform.designCounts()
+      const generationTotals = generations?.generationCountsAll() ?? new Map<string, { total: number, succeeded: number }>()
+      const current = generations?.generationWindowAll(range.from, range.to, [...activeGenerations]) ?? { jobs: [], attempts: [], live: [] }
+      const previous = generations?.generationWindowAll(range.previousFrom, Math.max(range.previousFrom, range.previousTo - 1), [...activeGenerations]) ?? { jobs: [], attempts: [], live: [] }
+      const fromIso = new Date(range.from).toISOString()
+      const toIso = new Date(range.to).toISOString()
+      const previousFromIso = new Date(range.previousFrom).toISOString()
+      const previousToIso = new Date(range.previousTo).toISOString()
+      const mapOrder = (order: ReturnType<PlatformStore['listPrintOrdersBetween']>[number]) => ({
+        id: order.id,
+        companyId: order.company_id,
+        companyName: names.get(order.company_id) ?? '',
+        userId: order.user_id,
+        userName: order.user_name,
+        productId: order.product_id,
+        status: order.status,
+        quantity: order.quantity,
+        deliveryDate: order.delivery_date,
+        designId: order.design_id,
+        createdAt: order.created_at,
+      })
+      const currentOrders = deps.platform.listPrintOrdersBetween(fromIso, toIso).map(mapOrder)
+      const previousOrders = deps.platform.listPrintOrdersBetween(previousFromIso, previousToIso)
+        .filter((order) => order.created_at < previousToIso)
+        .map(mapOrder)
+      const designIds = [
+        ...current.jobs.map((job) => job.design_id),
+        ...previous.jobs.map((job) => job.design_id),
+        ...currentOrders.map((order) => order.designId),
+        ...previousOrders.map((order) => order.designId),
+      ].flatMap((id) => id ? [id] : [])
+      const links = deps.platform.designLinks(designIds)
+      const eventKeys = new Map(deps.platform.eventOccasionKeys(links.flatMap((link) => link.eventId ? [link.eventId] : [])).map((row) => [row.id, row.occasionKey]))
+      const occasionByDesign = new Map(links.map((link) => [link.id, occasionKeyFromEvent(link.eventId, eventKeys)]))
+      const withOccasion = <T extends { designId: string | null }>(order: T) => ({
+        ...order,
+        occasionKey: order.designId ? occasionByDesign.get(order.designId) ?? null : null,
+      })
+      const orders = currentOrders.map(withOccasion)
+      const report = buildDashboard({
+        preset: preset.data,
+        from: range.from,
+        to: range.to,
+        previousFrom: range.previousFrom,
+        previousTo: range.previousTo,
+        now: Date.now(),
+        detailedSince: generations?.detailedSince() ?? Date.now(),
+        followupHours: deps.config.orderFollowupHours,
+        jobs: current.jobs,
+        previousJobs: previous.jobs,
+        attempts: current.attempts,
+        live: current.live,
+        orders,
+        previousOrderCount: deps.platform.countPrintOrdersBetween(new Date(range.previousFrom).toISOString(), new Date(range.previousTo).toISOString()),
+        activeUsers: (await deps.store.activeActorIdsAll(fromIso, toIso)).length,
+        previousActiveUsers: (await deps.store.activeActorIdsAll(new Date(range.previousFrom).toISOString(), new Date(Math.max(range.previousFrom, range.previousTo - 1)).toISOString())).length,
+        status: status.data,
+        registrations: companies.map((company) => Date.parse(company.createdAt)),
+        companyNames: names,
+        previousOrders,
+        occasionByDesign,
+        companiesTotal: companies.length,
+      })
+      const newInPeriod = companies.filter((company) => {
+        const at = Date.parse(company.createdAt)
+        return at >= range.from && at <= range.to
+      }).length
+      res.setHeader('Cache-Control', 'private, no-store')
+      res.json({
+        ...report,
+        companies: {
+          total: companies.length,
+          newInPeriod,
+          rows: companies.map((company) => ({
+            id: company.id,
+            name: company.name,
+            email: company.email,
+            createdAt: company.createdAt,
+            status: accountStatusLabel(company.status),
+            orders: orderTotals.get(company.id) ?? 0,
+            designs: designTotals.get(company.id) ?? 0,
+            generations: generationTotals.get(company.id)?.total ?? 0,
+            succeeded: generationTotals.get(company.id)?.succeeded ?? 0,
+          })),
+        },
+      })
+    } catch (error) {
+      next(error)
+    }
+  })
+
   app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
     void _next
     if (error instanceof z.ZodError) {
@@ -629,10 +976,82 @@ function safeGeminiClass(value: unknown) {
   return typeof value === 'string' && allowed.has(value) ? value : null
 }
 
+function generationFailureCode(error: unknown) {
+  const geminiClass = metricContext.getStore()?.geminiClass
+  if (error instanceof AppError) {
+    if (error.code === 'IMAGE_RATE_LIMITED') return 'IMAGE_RATE_LIMITED'
+    if (error.code === 'INVALID_OUTPUT') return 'INVALID_OUTPUT'
+    if (error.code === 'IMAGE_TIMEOUT' || error.status === 504 || error.status === 408) return 'TIMEOUT'
+    if (error.status === 429 || geminiClass === 'quota') return 'QUOTA'
+    if (geminiClass === 'not_configured') return 'NOT_CONFIGURED'
+    if (geminiClass === 'auth' || error.status === 401 || error.status === 403) return 'AUTH'
+    if (geminiClass === 'invalid' || error.status === 400) return 'INVALID'
+    if (geminiClass === 'model_not_found' || error.status === 404) return 'UNAVAILABLE'
+  }
+  return 'IMAGE_GENERATION_UNAVAILABLE'
+}
+
+function previewFromDataUrl(value: string) {
+  if (!isDisplayableImage(value)) return null
+  const match = /^data:image\/(png|jpeg|jpg|webp);base64,([A-Za-z0-9+/=\r\n]+)$/.exec(value)
+  if (!match) return null
+  const mime = match[1] === 'jpg' || match[1] === 'jpeg' ? 'image/jpeg' : `image/${match[1]}`
+  return { mime, bytes: Buffer.from(match[2].replace(/\s/g, ''), 'base64') }
+}
+
+function emptyGenerationReport(window: (typeof METRIC_WINDOWS)[number]) {
+  const now = new Date().toISOString()
+  return {
+    window,
+    from: now,
+    to: now,
+    generatedAt: now,
+    timezone: 'Asia/Riyadh',
+    totals: {
+      total: 0,
+      succeeded: 0,
+      incomplete: 0,
+      failed: 0,
+      timedOut: 0,
+      queued: 0,
+      running: 0,
+      successRate: null,
+      avgApiMs: null,
+      p95ApiMs: null,
+      avgGenerationMs: null,
+    },
+    series: [],
+    failures: [],
+    recent: [],
+  }
+}
+
 function routeParam(value: string | string[] | undefined) {
   const id = Array.isArray(value) ? value[0] : value
   if (!id) throw new AppError('معرّف غير صالح.', 400, 'INVALID_ID')
   return id
+}
+
+function companyParam(value: string | string[] | undefined) {
+  const id = routeParam(value)
+  if (!/^company_[A-Za-z0-9_-]{1,80}$/.test(id)) throw new AppError('معرّف الشركة غير صالح.', 400, 'INVALID_ID')
+  return id
+}
+
+function accountStatusLabel(status: string) {
+  if (status === 'deleted') return 'محذوف'
+  if (status === 'active') return 'نشط'
+  return status
+}
+
+function occasionKeyFromEvent(eventId: string | null, keys: Map<string, string | null>) {
+  if (!eventId) return null
+  if (eventId.startsWith('sys:')) {
+    const key = eventId.slice(4).trim()
+    return key || null
+  }
+  const key = keys.get(eventId)?.trim()
+  return key || null
 }
 
 function knowledgeWriteStatus(
@@ -664,6 +1083,16 @@ function publicSources(
     excerpt: chunk.content.slice(0, 280),
     similarity: Number(chunk.similarity.toFixed(4)),
   }))
+}
+
+function sessionCookieOptions(maxAge: number) {
+  return {
+    httpOnly: true,
+    sameSite: 'lax' as const,
+    secure: false,
+    path: '/',
+    maxAge,
+  }
 }
 
 function publicUser(user: SessionUser) {

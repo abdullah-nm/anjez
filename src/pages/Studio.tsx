@@ -239,6 +239,7 @@ export function Studio() {
         subhead: design.subhead,
         body: design.body,
         generatedImageDataUrl: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(design.svg)}`,
+        savedDesignId: design.id,
       })
       previewRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
     } catch (error) {

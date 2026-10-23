@@ -15,7 +15,10 @@ export function Welcome() {
       {loading ? null : user ? (
         <Link className="btn btn-primary" to="/studio">ابدأ</Link>
       ) : (
-        <Link className="btn btn-primary" to="/login">دخول</Link>
+        <span className="welcome-actions">
+          <Link className="btn btn-primary" to="/login">تسجيل الدخول</Link>
+          <Link className="btn btn-secondary" to="/register">إنشاء حساب شركة جديدة</Link>
+        </span>
       )}
     </section>
   )

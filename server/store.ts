@@ -17,6 +17,17 @@ import type {
 
 export type UserRow = SessionUser & { passwordHash: string }
 
+const ACTIVITY_ACTIONS = [
+  'auth.login',
+  'design.image.generate',
+  'design.compose',
+  'print.order',
+  'document.upload',
+  'document.reindex',
+  'knowledge.ask',
+  'design.status',
+]
+
 export interface KnowledgeStore {
   getUserByEmail(email: string): Promise<UserRow | null>
   getUserById(id: string): Promise<SessionUser | null>
@@ -27,6 +38,14 @@ export interface KnowledgeStore {
     email: string
     name: string
     role: Role
+    passwordHash: string
+  }): Promise<void>
+  createCompanyAccount(input: {
+    companyId: string
+    companyName: string
+    userId: string
+    email: string
+    name: string
     passwordHash: string
   }): Promise<void>
   upsertCompany(id: string, name: string): Promise<void>
@@ -57,9 +76,79 @@ export interface KnowledgeStore {
   searchChunks(companyId: string, queryEmbedding: number[], limit: number): Promise<RetrievedChunk[]>
   storedEmbeddingDimension(): Promise<number | null>
   audit(event: AuditEvent): Promise<void>
+  activeActorIds(companyId: string, fromIso: string, toIso: string): Promise<string[]>
+  activeActorIdsAll(fromIso: string, toIso: string): Promise<string[]>
+  listPlatformCompanies(): Promise<PlatformCompany[]>
+  listCompanyUsers(companyId: string): Promise<CompanyAccount[]>
+  listIndependentClients(): Promise<ClientAccount[]>
   purgeExpired(nowIso: string): Promise<number>
   ping(): Promise<boolean>
   close(): Promise<void>
+}
+
+export type CompanyAccount = {
+  id: string
+  email: string
+  name: string
+  role: Role
+  createdAt: string
+}
+
+export type ClientAccount = {
+  id: string
+  email: string
+  name: string
+  companyId: string
+  createdAt: string
+}
+
+function accountCreatedAt(value: unknown) {
+  const parsed = new Date(String(value || ''))
+  return Number.isNaN(parsed.getTime()) ? new Date(0).toISOString() : parsed.toISOString()
+}
+
+export type PlatformCompany = {
+  id: string
+  name: string
+  email: string
+  contactName: string
+  role: Role | null
+  createdAt: string
+  status: string
+}
+
+type CompanyDirectoryRow = {
+  companyId: string
+  companyName: string
+  companyCreated: string
+  userId: string | null
+  email: string | null
+  userName: string | null
+  role: Role | null
+  userCreated: string | null
+  status: string | null
+  deletedAt: string | null
+}
+
+function groupCompanies(rows: CompanyDirectoryRow[]): PlatformCompany[] {
+  const grouped = new Map<string, { row: CompanyDirectoryRow, contact: CompanyDirectoryRow | null }>()
+  for (const row of rows) {
+    const current = grouped.get(row.companyId)
+    if (!current) {
+      grouped.set(row.companyId, { row, contact: row.userId ? row : null })
+      continue
+    }
+    if (row.userId && row.role === 'admin' && current.contact?.role !== 'admin') current.contact = row
+  }
+  return [...grouped.values()].map(({ row, contact }) => ({
+    id: row.companyId,
+    name: row.companyName,
+    email: contact?.email ?? '',
+    contactName: contact?.userName ?? '',
+    role: contact?.role ?? null,
+    createdAt: accountCreatedAt(row.companyCreated || contact?.userCreated),
+    status: contact?.deletedAt ? 'deleted' : (contact?.status || 'active'),
+  }))
 }
 
 function requireCompanyId(companyId: string) {
@@ -152,6 +241,20 @@ export class SqliteStore implements KnowledgeStore {
       );
       CREATE INDEX IF NOT EXISTS idx_audit_company ON audit_logs(company_id, at);
     `)
+    this.keepCompanyAccounts()
+  }
+
+  private keepCompanyAccounts() {
+    const rows = this.db.prepare(
+      `SELECT u.company_id, u.name
+       FROM users u
+       WHERE u.role = 'member'
+         AND (SELECT COUNT(*) FROM users x WHERE x.company_id = u.company_id) = 1`,
+    ).all() as { company_id: string, name: string }[]
+    const fillName = this.db.prepare(
+      `UPDATE companies SET name = ? WHERE id = ? AND trim(name) = ''`,
+    )
+    for (const row of rows) fillName.run(row.name, row.company_id)
   }
 
   async getUserByEmail(email: string) {
@@ -234,6 +337,36 @@ export class SqliteStore implements KnowledgeStore {
       input.passwordHash,
       new Date().toISOString(),
     )
+  }
+
+  async createCompanyAccount(input: {
+    companyId: string
+    companyName: string
+    userId: string
+    email: string
+    name: string
+    passwordHash: string
+  }) {
+    const email = input.email.trim().toLowerCase()
+    const existing = this.db.prepare('SELECT id FROM users WHERE lower(email) = lower(?)').get(email) as { id: string } | undefined
+    if (existing) throw new AppError('هذا البريد مسجّل بالفعل. سجّل الدخول بدل إنشاء حساب جديد.', 409, 'EMAIL_TAKEN')
+    this.db.exec('BEGIN IMMEDIATE')
+    try {
+      this.db.prepare(
+        'INSERT INTO companies (id, name, created_at) VALUES (?, ?, ?)',
+      ).run(input.companyId, input.companyName, new Date().toISOString())
+      this.db.prepare(
+        `INSERT INTO users (id, company_id, email, name, role, password_hash, created_at)
+         VALUES (?, ?, ?, ?, 'member', ?, ?)`,
+      ).run(input.userId, input.companyId, email, input.name, input.passwordHash, new Date().toISOString())
+      this.db.exec('COMMIT')
+    } catch (error) {
+      this.db.exec('ROLLBACK')
+      if (error instanceof Error && /UNIQUE constraint failed/i.test(error.message)) {
+        throw new AppError('هذا البريد مسجّل بالفعل. سجّل الدخول بدل إنشاء حساب جديد.', 409, 'EMAIL_TAKEN')
+      }
+      throw error
+    }
   }
 
   async upsertCompany(id: string, name: string) {
@@ -458,6 +591,97 @@ export class SqliteStore implements KnowledgeStore {
     return blobToFloats(row.embedding).length
   }
 
+  async listCompanyUsers(companyId: string) {
+    const rows = this.db.prepare(
+      `SELECT id, email, name, role, created_at FROM users WHERE company_id = ? ORDER BY created_at ASC`,
+    ).all(requireCompanyId(companyId)) as { id: string, email: string, name: string, role: Role, created_at: string }[]
+    return rows.map((row) => ({
+      id: row.id,
+      email: row.email,
+      name: row.name,
+      role: row.role,
+      createdAt: accountCreatedAt(row.created_at),
+    }))
+  }
+
+  async listIndependentClients() {
+    const rows = this.db.prepare(
+      `SELECT u.id, u.email, u.name, u.company_id, u.created_at
+       FROM users u
+       WHERE u.role = 'member'
+         AND (SELECT COUNT(*) FROM users x WHERE x.company_id = u.company_id) = 1
+       ORDER BY u.created_at DESC`,
+    ).all() as { id: string, email: string, name: string, company_id: string, created_at: string }[]
+    return rows.map((row) => ({
+      id: row.id,
+      email: row.email,
+      name: row.name,
+      companyId: row.company_id,
+      createdAt: accountCreatedAt(row.created_at),
+    }))
+  }
+
+  async activeActorIds(companyId: string, fromIso: string, toIso: string) {
+    const marks = ACTIVITY_ACTIONS.map(() => '?').join(',')
+    const rows = this.db.prepare(
+      `SELECT DISTINCT a.actor_user_id AS id
+       FROM audit_logs a
+       JOIN users u ON u.id = a.actor_user_id AND u.company_id = a.company_id
+       WHERE a.company_id = ? AND a.result IN ('ok', 'error') AND a.action IN (${marks})
+         AND a.at >= ? AND a.at <= ?`,
+    ).all(companyId, ...ACTIVITY_ACTIONS, fromIso, toIso) as { id: string }[]
+    return rows.map((row) => row.id)
+  }
+
+  async activeActorIdsAll(fromIso: string, toIso: string) {
+    const marks = ACTIVITY_ACTIONS.map(() => '?').join(',')
+    const rows = this.db.prepare(
+      `SELECT DISTINCT a.actor_user_id AS id
+       FROM audit_logs a
+       JOIN users u ON u.id = a.actor_user_id AND u.company_id = a.company_id
+       WHERE a.result IN ('ok', 'error') AND a.action IN (${marks})
+         AND a.at >= ? AND a.at <= ?`,
+    ).all(...ACTIVITY_ACTIONS, fromIso, toIso) as { id: string }[]
+    return rows.map((row) => row.id)
+  }
+
+  async listPlatformCompanies() {
+    const columns = new Set((this.db.prepare(`PRAGMA table_info(users)`).all() as { name: string }[]).map((column) => column.name))
+    const statusSql = columns.has('status') ? 'u.status' : 'NULL'
+    const deletedSql = columns.has('deleted_at') ? 'u.deleted_at' : 'NULL'
+    const rows = this.db.prepare(
+      `SELECT c.id AS company_id, c.name AS company_name, c.created_at AS company_created,
+              u.id AS user_id, u.email, u.name AS user_name, u.role, u.created_at AS user_created,
+              ${statusSql} AS status, ${deletedSql} AS deleted_at
+       FROM companies c
+       LEFT JOIN users u ON u.company_id = c.id
+       ORDER BY c.created_at ASC, u.created_at ASC`,
+    ).all() as {
+      company_id: string
+      company_name: string
+      company_created: string
+      user_id: string | null
+      email: string | null
+      user_name: string | null
+      role: Role | null
+      user_created: string | null
+      status: string | null
+      deleted_at: string | null
+    }[]
+    return groupCompanies(rows.map((row) => ({
+      companyId: row.company_id,
+      companyName: row.company_name,
+      companyCreated: row.company_created,
+      userId: row.user_id,
+      email: row.email,
+      userName: row.user_name,
+      role: row.role,
+      userCreated: row.user_created,
+      status: row.status,
+      deletedAt: row.deleted_at,
+    })))
+  }
+
   async audit(event: AuditEvent) {
     this.db.prepare(
       `INSERT INTO audit_logs (id, at, actor_user_id, company_id, action, target_type, target_id, ip, result, extra)
@@ -570,6 +794,37 @@ class PostgresStore implements KnowledgeStore {
        ON CONFLICT (id) DO NOTHING`,
       [input.id, input.companyId, input.email, input.name, input.role, input.passwordHash],
     )
+  }
+
+  async createCompanyAccount(input: {
+    companyId: string
+    companyName: string
+    userId: string
+    email: string
+    name: string
+    passwordHash: string
+  }) {
+    const email = input.email.trim().toLowerCase()
+    const client = await this.pool.connect()
+    try {
+      await client.query('BEGIN')
+      const existing = await client.query('SELECT id FROM users WHERE lower(email) = lower($1)', [email])
+      if (existing.rows[0]) throw new AppError('هذا البريد مسجّل بالفعل. سجّل الدخول بدل إنشاء حساب جديد.', 409, 'EMAIL_TAKEN')
+      await client.query('INSERT INTO companies (id, name) VALUES ($1, $2)', [input.companyId, input.companyName])
+      await client.query(
+        `INSERT INTO users (id, company_id, email, name, role, password_hash) VALUES ($1, $2, $3, $4, 'member', $5)`,
+        [input.userId, input.companyId, email, input.name, input.passwordHash],
+      )
+      await client.query('COMMIT')
+    } catch (error) {
+      await client.query('ROLLBACK')
+      if (typeof error === 'object' && error && 'code' in error && (error as { code?: string }).code === '23505') {
+        throw new AppError('هذا البريد مسجّل بالفعل. سجّل الدخول بدل إنشاء حساب جديد.', 409, 'EMAIL_TAKEN')
+      }
+      throw error
+    } finally {
+      client.release()
+    }
   }
 
   async upsertCompany(id: string, name: string) {
@@ -768,6 +1023,92 @@ class PostgresStore implements KnowledgeStore {
         filename: row.filename,
         similarity: Number(row.similarity),
       }))
+  }
+
+  async listCompanyUsers(companyId: string) {
+    const { rows } = await this.pool.query<{ id: string, email: string, name: string, role: Role, created_at: string }>(
+      `SELECT id, email, name, role, created_at FROM users WHERE company_id = $1 ORDER BY created_at ASC`,
+      [requireCompanyId(companyId)],
+    )
+    return rows.map((row) => ({
+      id: row.id,
+      email: row.email,
+      name: row.name,
+      role: row.role,
+      createdAt: accountCreatedAt(row.created_at),
+    }))
+  }
+
+  async listIndependentClients() {
+    const { rows } = await this.pool.query<{ id: string, email: string, name: string, company_id: string, created_at: string }>(
+      `SELECT u.id, u.email, u.name, u.company_id, u.created_at
+       FROM users u
+       WHERE u.role = 'member'
+         AND (SELECT COUNT(*) FROM users x WHERE x.company_id = u.company_id) = 1
+       ORDER BY u.created_at DESC`,
+    )
+    return rows.map((row) => ({
+      id: row.id,
+      email: row.email,
+      name: row.name,
+      companyId: row.company_id,
+      createdAt: accountCreatedAt(row.created_at),
+    }))
+  }
+
+  async activeActorIds(companyId: string, fromIso: string, toIso: string) {
+    const { rows } = await this.pool.query<{ id: string }>(
+      `SELECT DISTINCT a.actor_user_id AS id
+       FROM audit_logs a
+       JOIN users u ON u.id = a.actor_user_id AND u.company_id = a.company_id
+       WHERE a.company_id = $1 AND a.result IN ('ok', 'error') AND a.action = ANY($2::text[])
+         AND a.at >= $3 AND a.at <= $4`,
+      [companyId, ACTIVITY_ACTIONS, fromIso, toIso],
+    )
+    return rows.map((row) => row.id)
+  }
+
+  async activeActorIdsAll(fromIso: string, toIso: string) {
+    const { rows } = await this.pool.query<{ id: string }>(
+      `SELECT DISTINCT a.actor_user_id AS id
+       FROM audit_logs a
+       JOIN users u ON u.id = a.actor_user_id AND u.company_id = a.company_id
+       WHERE a.result IN ('ok', 'error') AND a.action = ANY($1::text[])
+         AND a.at >= $2 AND a.at <= $3`,
+      [ACTIVITY_ACTIONS, fromIso, toIso],
+    )
+    return rows.map((row) => row.id)
+  }
+
+  async listPlatformCompanies() {
+    const { rows } = await this.pool.query<{
+      company_id: string
+      company_name: string
+      company_created: string
+      user_id: string | null
+      email: string | null
+      user_name: string | null
+      role: Role | null
+      user_created: string | null
+    }>(
+      `SELECT c.id AS company_id, c.name AS company_name, c.created_at AS company_created,
+              u.id AS user_id, u.email, u.name AS user_name, u.role, u.created_at AS user_created
+       FROM companies c
+       LEFT JOIN users u ON u.company_id = c.id
+       ORDER BY c.created_at ASC, u.created_at ASC`,
+    )
+    return groupCompanies(rows.map((row) => ({
+      companyId: row.company_id,
+      companyName: row.company_name,
+      companyCreated: row.company_created,
+      userId: row.user_id,
+      email: row.email,
+      userName: row.user_name,
+      role: row.role,
+      userCreated: row.user_created,
+      status: null,
+      deletedAt: null,
+    })))
   }
 
   async audit(event: AuditEvent) {

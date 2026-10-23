@@ -179,7 +179,7 @@ describe('company-isolated RAG', () => {
     const images: ImageGenerator = {
       generate: async ({ prompt }) => {
         receivedPrompt = prompt
-        return 'data:image/webp;base64,dGVzdA=='
+        return 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
       },
     }
     const { app, store } = await boot(images)
@@ -199,7 +199,7 @@ describe('company-isolated RAG', () => {
       })
       .expect(200)
 
-    expect(response.body.imageDataUrl).toBe('data:image/webp;base64,dGVzdA==')
+    expect(response.body.imageDataUrl).toBe('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==')
     expect(receivedPrompt).toContain('المراعي')
     expect(receivedPrompt).not.toContain('قمم')
     expect(receivedPrompt).toContain('Do not render text')

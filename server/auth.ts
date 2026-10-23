@@ -1,5 +1,5 @@
 import type { Request } from 'express'
-import { signSession, unsignSession, verifyPassword } from './lib/crypto.ts'
+import { hashPassword, newId, signSession, unsignSession, verifyPassword } from './lib/crypto.ts'
 import { AppError } from './lib/errors.ts'
 import type { KnowledgeStore } from './store.ts'
 import type { SessionUser } from './types.ts'
@@ -14,7 +14,9 @@ export async function loginUser(
   ttlMs: number,
 ) {
   const typed = email.trim()
-  const user = typed ? await store.getUserByEmail(typed) : null
+  if (!typed) throw new AppError('أدخل البريد الإلكتروني.', 400, 'EMAIL_REQUIRED')
+  if (!password) throw new AppError('أدخل كلمة المرور.', 400, 'PASSWORD_REQUIRED')
+  const user = await store.getUserByEmail(typed)
   if (!user || !verifyPassword(password, user.passwordHash)) {
     throw new AppError('البريد أو كلمة المرور غير صحيحة.', 401, 'INVALID_CREDENTIALS')
   }
@@ -23,6 +25,45 @@ export async function loginUser(
   const { passwordHash: _, ...session } = user
   void _
   return { token, user: session }
+}
+
+export async function registerCompany(
+  store: KnowledgeStore,
+  input: { companyName: string, email: string, password: string, confirm: string },
+  secret: string,
+  ttlMs: number,
+) {
+  const companyName = input.companyName.trim()
+  const email = input.email.trim().toLowerCase()
+  if (companyName.length < 2 || companyName.length > 80) {
+    throw new AppError('أدخل اسم الشركة بين حرفين وثمانين حرفًا.', 400, 'INVALID_NAME')
+  }
+  if (!email) throw new AppError('أدخل البريد الإلكتروني.', 400, 'EMAIL_REQUIRED')
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 160) {
+    throw new AppError('البريد الإلكتروني غير صالح.', 400, 'INVALID_EMAIL')
+  }
+  if (!input.password) throw new AppError('أدخل كلمة المرور.', 400, 'PASSWORD_REQUIRED')
+  if (input.password.length < 8 || input.password.length > 200) {
+    throw new AppError('كلمة المرور يجب أن تكون 8 أحرف على الأقل.', 400, 'WEAK_PASSWORD')
+  }
+  if (input.password !== input.confirm) {
+    throw new AppError('تأكيد كلمة المرور غير مطابق.', 400, 'PASSWORD_MISMATCH')
+  }
+  const companyId = newId('company')
+  const userId = newId('user')
+  await store.createCompanyAccount({
+    companyId,
+    companyName,
+    userId,
+    email,
+    name: companyName,
+    passwordHash: hashPassword(input.password),
+  })
+  const created = await store.getUserById(userId)
+  if (!created || created.role !== 'member' || created.companyId !== companyId || created.companyName !== companyName) {
+    throw new AppError('تعذر حفظ حساب الشركة.', 500, 'REGISTER_FAILED')
+  }
+  return loginUser(store, email, input.password, secret, ttlMs)
 }
 
 export async function userFromRequest(

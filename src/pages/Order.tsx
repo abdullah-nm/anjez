@@ -38,6 +38,7 @@ export function Order() {
       subhead: draft.subhead,
       body: draft.body,
       eventTitle,
+      designId: draft.savedDesignId,
     })
     if (!order) {
       setError('لم يُحفظ الطلب. لم يتم تأكيد الإرسال.')

@@ -8,7 +8,11 @@ import { AppError } from '../lib/errors.ts'
 import type { ImageGenerator } from '../lib/imageGeneration.ts'
 import type { LlmProvider, SessionUser } from '../types.ts'
 import { composeDesign, previewTemplate } from './compose.ts'
+import { runWithAttemptSink } from '../observability/attempts.ts'
 import { noteMetric } from '../observability/context.ts'
+import { isDisplayableSvg } from '../observability/dashboard.ts'
+import type { MetricsStore } from '../observability/metrics.ts'
+import type { KnowledgeStore } from '../store.ts'
 import { GeminiImageClient, GeminiTextClient } from './gemini.ts'
 import { applyCalendarUpdate, isSystemEventId, publicSystemOccasion, syncSystemOccasions } from './calendarSync.ts'
 import { occasionByKey, occasionCatalog, reminderOffsets, riyadhYmd, suggestedProducts } from './occasions.ts'
@@ -71,6 +75,9 @@ export function registerPlatformRoutes(
     llm: LlmProvider
     images: ImageGenerator
     requireUser: (req: Request) => Promise<SessionUser>
+    store: KnowledgeStore
+    metrics: MetricsStore | null
+    activeGenerations?: Set<string>
   },
 ) {
   const logoUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024 } })
@@ -113,7 +120,9 @@ export function registerPlatformRoutes(
   app.put('/api/brand', async (req, res, next) => {
     try {
       const user = await deps.requireUser(req)
-      requireRole(user, 'admin')
+      if (!(await canEditCompanyBrand(deps.store, user))) {
+        throw new AppError('حفظ هوية الشركة متاح لحساب الشركة.', 403, 'FORBIDDEN')
+      }
       const body = brandSchema.parse(req.body ?? {})
       const current = ensureBrand(deps.platform, user)
       const next: BrandProfile = {
@@ -134,7 +143,9 @@ export function registerPlatformRoutes(
   app.post('/api/brand/logo', logoUpload.single('file'), async (req, res, next) => {
     try {
       const user = await deps.requireUser(req)
-      requireRole(user, 'admin')
+      if (!(await canEditCompanyBrand(deps.store, user))) {
+        throw new AppError('حفظ هوية الشركة متاح لحساب الشركة.', 403, 'FORBIDDEN')
+      }
       const file = req.file
       if (!file) throw new AppError('ارفع ملف شعار.', 400, 'FILE_REQUIRED')
       const stored = deps.storage.saveLogo(user.companyId, file.mimetype, file.buffer)
@@ -162,7 +173,9 @@ export function registerPlatformRoutes(
   app.delete('/api/brand/logo', async (req, res, next) => {
     try {
       const user = await deps.requireUser(req)
-      requireRole(user, 'admin')
+      if (!(await canEditCompanyBrand(deps.store, user))) {
+        throw new AppError('حفظ هوية الشركة متاح لحساب الشركة.', 403, 'FORBIDDEN')
+      }
       const brand = ensureBrand(deps.platform, user)
       if (brand.logoPath) deps.storage.remove(brand.logoPath)
       brand.logoPath = null
@@ -343,11 +356,72 @@ export function registerPlatformRoutes(
     }
   })
 
+  app.get('/api/orders', async (req, res, next) => {
+    try {
+      const user = await deps.requireUser(req)
+      const orders = deps.platform.listOrdersForAccount(user.companyId, user.id)
+      res.json({
+        orders: orders.map((order) => ({
+          id: order.id,
+          createdAt: order.created_at,
+          productId: order.product_id,
+          quantity: order.quantity,
+          deliveryDate: order.delivery_date,
+          status: order.status,
+          designId: order.design_id,
+        })),
+      })
+    } catch (error) {
+      next(error)
+    }
+  })
+
+  app.post('/api/orders', async (req, res, next) => {
+    try {
+      const user = await deps.requireUser(req)
+      const body = z.object({
+        id: z.string().regex(/^ORD-\d{4,12}$/),
+        productId: z.string().trim().min(1).max(40),
+        quantity: z.number().int().min(1).max(100000),
+        deliveryDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+        designId: z.string().regex(/^des_[a-f0-9]+$/).nullable().optional(),
+      }).parse(req.body ?? {})
+      const linked = body.designId ? deps.platform.getDesign(user.companyId, body.designId) : null
+      const designId = linked && (user.role === 'admin' || linked.createdBy === user.id) ? linked.id : null
+      const createdAt = new Date().toISOString()
+      deps.platform.savePrintOrder({
+        companyId: user.companyId,
+        id: body.id,
+        userId: user.id,
+        userName: user.name,
+        productId: body.productId,
+        quantity: body.quantity,
+        deliveryDate: body.deliveryDate,
+        designId,
+        createdAt,
+      })
+      await deps.store.audit({
+        actorUserId: user.id,
+        companyId: user.companyId,
+        action: 'print.order',
+        targetType: 'order',
+        targetId: body.id,
+        ip: req.ip ?? null,
+        result: 'ok',
+        extra: { productId: body.productId },
+      })
+      res.status(201).json({ id: body.id, status: 'محفوظ', companyId: user.companyId })
+    } catch (error) {
+      next(error)
+    }
+  })
+
   app.get('/api/designs', async (req, res, next) => {
     try {
       const user = await deps.requireUser(req)
       const eventId = typeof req.query.eventId === 'string' ? req.query.eventId : undefined
-      res.json({ designs: deps.platform.listDesigns(user.companyId, eventId) })
+      const designs = deps.platform.listDesigns(user.companyId, eventId)
+      res.json({ designs: user.role === 'admin' ? designs : designs.filter((design) => design.createdBy === user.id) })
     } catch (error) {
       next(error)
     }
@@ -384,6 +458,7 @@ export function registerPlatformRoutes(
   })
 
   app.post('/api/designs/compose', async (req, res, next) => {
+    let jobId: string | null = null
     try {
       const user = await deps.requireUser(req)
       const body = composeSchema.parse(req.body ?? {})
@@ -393,7 +468,31 @@ export function registerPlatformRoutes(
       composeHits.set(user.id, [...recent, now])
       const linkedEvent = sessionEvent(deps.platform, user.companyId, body.eventId)
       const brand = ensureBrand(deps.platform, user)
-      const design = await composeDesign({
+      const started = Date.now()
+      try {
+        jobId = deps.metrics?.openGeneration({ companyId: user.companyId, userName: user.name, userId: user.id, kind: 'compose', now: started }) ?? null
+        if (jobId) {
+          deps.activeGenerations?.add(jobId)
+          deps.metrics?.markGenerationRunning(jobId)
+        }
+      } catch (error) {
+        console.error(`generation record skipped: ${error instanceof Error ? error.name : 'error'}`)
+      }
+      const design = await runWithAttemptSink(async (attempt) => {
+        if (!jobId || !deps.metrics) return
+        try {
+          deps.metrics.recordProviderAttempt({
+            jobId,
+            companyId: user.companyId,
+            model: attempt.model,
+            httpStatus: attempt.httpStatus,
+            durationMs: attempt.durationMs,
+            failureCode: attempt.failureCode,
+          })
+        } catch (error) {
+          console.error(`generation record skipped: ${error instanceof Error ? error.name : 'error'}`)
+        }
+      }, () => composeDesign({
         platform: deps.platform,
         storage: deps.storage,
         brand,
@@ -416,13 +515,90 @@ export function registerPlatformRoutes(
           instructions: body.instructions,
           content: body.content,
         },
+      }).catch(async (error: unknown) => {
+        const code = error instanceof AppError ? error.code : 'FAILED'
+        const httpStatus = error instanceof AppError ? error.status : 500
+        if (jobId && deps.metrics) {
+          try {
+            deps.metrics.finishGeneration({
+              id: jobId,
+              status: httpStatus === 504 ? 'timeout' : 'failed',
+              httpStatus,
+              apiDurationMs: Date.now() - started,
+              generationDurationMs: Date.now() - started,
+              failureCode: code,
+            })
+          } catch (recordError) {
+            console.error(`generation record skipped: ${recordError instanceof Error ? recordError.name : 'error'}`)
+          }
+        }
+        await deps.store.audit({
+          actorUserId: user.id,
+          companyId: user.companyId,
+          action: 'design.compose',
+          targetType: 'design',
+          targetId: null,
+          ip: req.ip ?? null,
+          result: 'error',
+          extra: { errorCode: code },
+        })
+        throw error
+      }))
+      if (!isDisplayableSvg(design.svg)) {
+        if (jobId && deps.metrics) {
+          deps.metrics.finishGeneration({
+            id: jobId,
+            status: 'failed',
+            httpStatus: 422,
+            apiDurationMs: Date.now() - started,
+            generationDurationMs: Date.now() - started,
+            failureCode: 'INVALID_OUTPUT',
+          })
+        }
+        throw new AppError('اكتمل التركيب دون نتيجة صالحة للعرض.', 422, 'INVALID_OUTPUT')
+      }
+      const stage = design.backgroundKind === 'ai_bitmap_background'
+        ? 'background_ready'
+        : design.backgroundNote.includes('غير مضبوط')
+          ? 'background_skipped_unconfigured'
+          : design.backgroundNote.includes('تعذر')
+            ? 'background_fallback'
+            : 'background_skipped'
+      if (jobId && deps.metrics) {
+        try {
+          deps.metrics.finishGeneration({
+            id: jobId,
+            status: 'succeeded',
+            httpStatus: 201,
+            apiDurationMs: Date.now() - started,
+            generationDurationMs: Date.now() - started,
+            failureCode: null,
+            designId: design.id,
+            backgroundStage: stage,
+            preview: { mime: 'image/svg+xml', bytes: Buffer.from(design.svg) },
+          })
+        } catch (error) {
+          console.error(`generation record skipped: ${error instanceof Error ? error.name : 'error'}`)
+        }
+      }
+      await deps.store.audit({
+        actorUserId: user.id,
+        companyId: user.companyId,
+        action: 'design.compose',
+        targetType: 'design',
+        targetId: design.id,
+        ip: req.ip ?? null,
+        result: 'ok',
+        extra: { backgroundKind: design.backgroundKind },
       })
       noteMetric(res, {
         feature: 'design.compose',
         backgroundKind: design.backgroundKind,
       })
+      if (jobId) deps.activeGenerations?.delete(jobId)
       res.status(201).json({ design, suggestions: suggestedProducts(body.purpose || 'custom') })
     } catch (error) {
+      if (jobId) deps.activeGenerations?.delete(jobId)
       next(error)
     }
   })
@@ -431,8 +607,22 @@ export function registerPlatformRoutes(
     try {
       const user = await deps.requireUser(req)
       const status = z.enum(['draft', 'approved', 'revision']).parse(req.body?.status)
-      const design = deps.platform.updateDesignStatus(user.companyId, String(req.params.id), status)
-      if (!design) throw new AppError('التصميم غير موجود ضمن شركتك.', 404, 'NOT_FOUND')
+      const current = deps.platform.getDesign(user.companyId, String(req.params.id))
+      if (!current || (user.role !== 'admin' && current.createdBy !== user.id)) {
+        throw new AppError('التصميم غير موجود ضمن حسابك.', 404, 'NOT_FOUND')
+      }
+      const design = deps.platform.updateDesignStatus(user.companyId, current.id, status)
+      if (!design) throw new AppError('التصميم غير موجود ضمن حسابك.', 404, 'NOT_FOUND')
+      await deps.store.audit({
+        actorUserId: user.id,
+        companyId: user.companyId,
+        action: 'design.status',
+        targetType: 'design',
+        targetId: design.id,
+        ip: req.ip ?? null,
+        result: 'ok',
+        extra: { status },
+      })
       res.json({ design })
     } catch (error) {
       next(error)
@@ -535,6 +725,12 @@ function eventTiming(body: { date?: string | null, dateCertainty?: DateCertainty
     throw new AppError('حدّد التاريخ، أو اترك المناسبة بلا موعد.', 400, 'DATE_REQUIRED')
   }
   return { date, dateCertainty, dateNote: body.dateNote ?? '' }
+}
+
+async function canEditCompanyBrand(store: KnowledgeStore, user: SessionUser) {
+  if (user.role === 'admin') return true
+  const accounts = await store.listCompanyUsers(user.companyId)
+  return accounts.length > 0 && accounts.every((account) => account.role !== 'admin')
 }
 
 function ensureBrand(platform: PlatformStore, user: SessionUser): BrandProfile {
