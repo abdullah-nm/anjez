@@ -43,6 +43,7 @@ export function Confirmation() {
         <p className="muted">لم يُرسل الطلب إلى مطبعة، والتصميم المرفق معاينة وليست ملفاً جاهزاً للطباعة.</p>
         <p>الكمية: {order.quantity}</p>
         <p>التسليم: {formatDate(order.deliveryDate)}</p>
+        {order.deliveryCity && <p>مدينة التسليم: {order.deliveryCity}</p>}
         <p>{order.address}</p>
         {order.notes && <p>ملاحظات: {order.notes}</p>}
       </article>

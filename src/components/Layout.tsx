@@ -65,7 +65,10 @@ export function Layout() {
               <button type="button" className="btn btn-ghost session-logout" onClick={() => void logout()}>خروج</button>
             </>
           ) : (
-            <NavLink className="btn btn-primary nav-cta" to="/login" state={{ from: location.pathname }}>دخول</NavLink>
+            <>
+              <NavLink className="btn btn-secondary nav-cta" to="/register">إنشاء حساب شركة</NavLink>
+              <NavLink className="btn btn-primary nav-cta" to="/login" state={{ from: location.pathname }}>تسجيل الدخول</NavLink>
+            </>
           )}
         </div>
       </header>
@@ -89,7 +92,7 @@ export function Layout() {
           </ol>
         </div>
       )}
-      <main className="page">
+      <main className={path === '/monitor' ? 'page dash-page' : 'page'}>
         <Outlet />
       </main>
     </div>

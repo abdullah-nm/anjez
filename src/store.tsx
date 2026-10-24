@@ -40,7 +40,7 @@ interface AppStore {
   draft: DesignDraft
   setDraft: (next: DesignDraft) => void
   orders: PrintOrder[]
-  placeOrder: (order: Omit<PrintOrder, 'id' | 'createdAt' | 'status'>) => PrintOrder | null
+  placeOrder: (order: Omit<PrintOrder, 'id' | 'createdAt' | 'status'> & { designId?: string }) => PrintOrder | null
 }
 
 const StoreContext = createContext<AppStore | null>(null)
@@ -61,82 +61,107 @@ function brandFromSession(user: { name: string; email: string; companyName: stri
 export function StoreProvider({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth()
   const seenUser = useRef(false)
-  const [brand, setBrand] = useState<CompanyBrand>(() => {
-    const stored = readJson<Partial<CompanyBrand>>(BRAND_KEY, {})
-    return {
-      ...defaultBrand,
-      ...stored,
-      companyName: stored.companyName || '',
-      contactName: stored.contactName || '',
-      email: stored.email || '',
-      phone: stored.phone || '',
-      city: stored.city || '',
-      slogan: stored.slogan || '',
-    }
+  const [brand, setBrand] = useState<CompanyBrand>({
+    ...defaultBrand,
+    companyName: '',
+    contactName: '',
+    email: '',
+    phone: '',
+    city: '',
+    slogan: '',
   })
-  const [draft, setDraftState] = useState<DesignDraft>(() => {
-    const stored = readJson(DRAFT_KEY, initialDraft)
-    return {
-      ...initialDraft,
-      ...stored,
-      headline: stored.headline || '',
-      subhead: '',
-      body: '',
-    }
-  })
-  const [orders, setOrders] = useState<PrintOrder[]>(() =>
-    readJson(ORDERS_KEY, []),
-  )
+  const [draft, setDraftState] = useState<DesignDraft>(initialDraft)
+  const [orders, setOrders] = useState<PrintOrder[]>([])
 
   useEffect(() => {
-    if (user) seenUser.current = true
-    if (loading || user || !seenUser.current) return
-    setBrand({ ...defaultBrand })
-    setDraftState(initialDraft)
-    setOrders([])
-    seenUser.current = false
-  }, [user, loading])
-
-  useEffect(() => {
-    if (!user) return
-    setBrand((current) => brandFromSession(user, current))
+    if (loading) return
+    if (!user) {
+      if (!seenUser.current) return
+      setBrand({ ...defaultBrand, companyName: '', contactName: '', email: '', phone: '', city: '', slogan: '' })
+      setDraftState(initialDraft)
+      setOrders([])
+      seenUser.current = false
+      return
+    }
+    seenUser.current = true
+    const storedDraft = readJson(`${DRAFT_KEY}:${user.id}`, initialDraft)
+    setDraftState({ ...initialDraft, ...storedDraft, headline: storedDraft.headline || '', subhead: '', body: '' })
+    const localOrders = readJson<PrintOrder[]>(`${ORDERS_KEY}:${user.id}`, [])
+    setOrders(localOrders)
+    const storedBrand = readJson<Partial<CompanyBrand>>(`${BRAND_KEY}:${user.id}`, {})
+    setBrand(brandFromSession(user, storedBrand))
     void (async () => {
       const response = await fetch('/api/brand', { credentials: 'include' })
-      if (!response.ok) return
-      const payload = await response.json()
-      if (!payload?.brand) return
-      const logoUrl = payload.brand.logoPath ? await fetchBrandLogoObjectUrl() : null
-      const next: CompanyBrand = {
-        companyName: payload.brand.companyName || user.companyName,
-        industry: payload.brand.industry,
-        contactName: payload.brand.contactName || user.name,
-        email: payload.brand.email || user.email,
-        phone: payload.brand.phone,
-        city: payload.brand.city,
-        primaryColor: payload.brand.primaryColor,
-        accentColor: payload.brand.accentColor,
-        slogan: payload.brand.slogan,
-        tone: payload.brand.tone || 'فاخر',
-        logoUrl,
+      const payload = response.ok ? await response.json() : null
+      if (payload?.brand) {
+        const logoUrl = payload.brand.logoPath ? await fetchBrandLogoObjectUrl() : null
+        const next: CompanyBrand = {
+          companyName: payload.brand.companyName || user.companyName,
+          industry: payload.brand.industry,
+          contactName: payload.brand.contactName || user.name,
+          email: payload.brand.email || user.email,
+          phone: payload.brand.phone,
+          city: payload.brand.city,
+          primaryColor: payload.brand.primaryColor,
+          accentColor: payload.brand.accentColor,
+          slogan: payload.brand.slogan,
+          tone: payload.brand.tone || 'فاخر',
+          logoUrl,
+        }
+        setBrand(next)
+        try {
+          localStorage.setItem(
+            `${BRAND_KEY}:${user.id}`,
+            JSON.stringify({ ...next, logoUrl: payload.brand.logoPath ? '/api/brand/logo' : null }),
+          )
+        } catch {
+          /* ignore quota */
+        }
       }
-      setBrand(next)
-      try {
-        localStorage.setItem(
-          BRAND_KEY,
-          JSON.stringify({ ...next, logoUrl: payload.brand.logoPath ? '/api/brand/logo' : null }),
-        )
-      } catch {
-        /* ignore quota */
+      const ordersResponse = await fetch('/api/orders', { credentials: 'include' })
+      if (ordersResponse.ok) {
+        const ordersPayload = await ordersResponse.json()
+        const remote = Array.isArray(ordersPayload?.orders) ? ordersPayload.orders as Partial<PrintOrder>[] : []
+        setOrders((current) => {
+          const merged = new Map(current.map((order) => [order.id, order]))
+          for (const order of remote) {
+            if (!order.id || merged.has(order.id)) continue
+            merged.set(order.id, {
+              id: order.id,
+              createdAt: order.createdAt || new Date().toISOString(),
+              productId: order.productId || '',
+              eventId: order.eventId || '',
+              size: order.size || '',
+              quantity: order.quantity || 1,
+              deliveryDate: order.deliveryDate || '',
+              address: order.address || '',
+              deliveryCity: order.deliveryCity || '',
+              notes: order.notes || '',
+              headline: order.headline || '',
+              subhead: order.subhead || '',
+              body: order.body || '',
+              status: order.status || 'محفوظ',
+            })
+          }
+          const next = [...merged.values()].sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+          try {
+            localStorage.setItem(`${ORDERS_KEY}:${user.id}`, JSON.stringify(next))
+          } catch {
+            /* keep the memory copy */
+          }
+          return next
+        })
       }
     })().catch(() => undefined)
-  }, [user])
+  }, [user, loading])
 
   const value = useMemo<AppStore>(
     () => ({
       brand,
       saveBrand: (next) => {
+        if (!user) return false
         try {
-          localStorage.setItem(BRAND_KEY, JSON.stringify(next))
+          localStorage.setItem(`${BRAND_KEY}:${user.id}`, JSON.stringify(next))
           setBrand(next)
           return true
         } catch {
@@ -146,23 +171,39 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       draft,
       setDraft: (next) => {
         setDraftState(next)
+        if (!user) return
         try {
-          localStorage.setItem(DRAFT_KEY, JSON.stringify(next))
+          localStorage.setItem(`${DRAFT_KEY}:${user.id}`, JSON.stringify(next))
         } catch {
           /* keep memory copy even if storage is full */
         }
       },
       orders,
       placeOrder: (input) => {
+        if (!user) return null
+        const { designId, ...rest } = input
         const order: PrintOrder = {
-          ...input,
+          ...rest,
           id: `ORD-${Date.now().toString().slice(-6)}`,
           createdAt: new Date().toISOString(),
           status: 'محفوظ',
         }
+        void fetch('/api/orders', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: order.id,
+            productId: order.productId,
+            quantity: order.quantity,
+            deliveryDate: order.deliveryDate,
+            deliveryCity: order.deliveryCity || '',
+            designId: designId ?? null,
+          }),
+        }).catch(() => undefined)
         try {
           const next = [order, ...orders]
-          localStorage.setItem(ORDERS_KEY, JSON.stringify(next))
+          localStorage.setItem(`${ORDERS_KEY}:${user.id}`, JSON.stringify(next))
           setOrders(next)
           return order
         } catch {
@@ -170,7 +211,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         }
       },
     }),
-    [brand, draft, orders],
+    [brand, draft, orders, user],
   )
 
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>

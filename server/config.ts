@@ -35,6 +35,7 @@ export type AppConfig = {
   retentionDays: number
   maxUploadBytes: number
   minSimilarity: number
+  orderFollowupHours: number
 }
 
 function blank(env: NodeJS.ProcessEnv, key: string) {
@@ -106,6 +107,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     retentionDays: Number(env.DOCUMENT_RETENTION_DAYS) || 365,
     maxUploadBytes: Number(env.MAX_UPLOAD_BYTES) || 8 * 1024 * 1024,
     minSimilarity: Number(env.RAG_MIN_SIMILARITY) || 0.22,
+    orderFollowupHours: Math.min(24 * 14, Math.max(1, Number(env.ORDER_FOLLOWUP_HOURS) || 48)),
   }
 }
 

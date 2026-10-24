@@ -63,6 +63,7 @@ export interface DesignDraft {
   body: string
   size: string
   generatedImageDataUrl?: string
+  savedDesignId?: string
 }
 
 export interface PrintOrder {
@@ -74,6 +75,7 @@ export interface PrintOrder {
   quantity: number
   deliveryDate: string
   address: string
+  deliveryCity?: string
   notes: string
   headline: string
   subhead: string

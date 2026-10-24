@@ -34,6 +34,7 @@ type AuthContextValue = {
   rag: RagStatus | null
   loading: boolean
   login: (email: string, password: string) => Promise<string | null>
+  register: (input: { companyName: string, email: string, password: string, confirm: string }) => Promise<string | null>
   logout: () => Promise<void>
   refresh: () => Promise<void>
 }
@@ -79,17 +80,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return null
   }, [])
 
+  const register = useCallback(async (input: { companyName: string, email: string, password: string, confirm: string }) => {
+    const response = await fetch('/api/register', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    })
+    const payload = await readJson(response)
+    if (!response.ok) return payload?.error || 'تعذر إنشاء الحساب.'
+    setUser(payload.user)
+    if (payload.rag) setRag(payload.rag)
+    return null
+  }, [])
+
   const logout = useCallback(async () => {
     await fetch('/api/logout', { method: 'POST', credentials: 'include' })
-    localStorage.removeItem('anjz-brand')
-    localStorage.removeItem('anjz-draft')
-    localStorage.removeItem('anjz-orders')
     setUser(null)
   }, [])
 
   const value = useMemo(
-    () => ({ user, rag, loading, login, logout, refresh }),
-    [user, rag, loading, login, logout, refresh],
+    () => ({ user, rag, loading, login, register, logout, refresh }),
+    [user, rag, loading, login, register, logout, refresh],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

@@ -15,7 +15,7 @@ type ServerBrand = CompanyBrand & {
 
 export function Brand() {
   const { brand, saveBrand } = useStore()
-  const { user } = useAuth()
+  const { user, refresh } = useAuth()
   const [form, setForm] = useState<ServerBrand>({
     ...brand,
     description: '',
@@ -89,6 +89,7 @@ export function Brand() {
       return
     }
     saveBrand({ ...form, logoUrl: form.logoPath ? `/api/brand/logo?t=${Date.now()}` : brand.logoUrl })
+    if (payload.user) await refresh()
     document.documentElement.lang = form.language
     document.documentElement.dir = form.language === 'ar' ? 'rtl' : 'ltr'
     setMessage('تم حفظ هوية الشركة على الخادم، وستُستخدم في توليد التصاميم.')
@@ -143,7 +144,9 @@ export function Brand() {
   }
 
   return (
-    <form className="stack form-narrow" onSubmit={onSubmit}>
+    <div className="stack form-narrow">
+      {user && <AccountNames />}
+    <form className="stack" onSubmit={onSubmit}>
       <div className="section-head">
         <p className="eyebrow">هوية الشركة</p>
         <h1>ملف الشركة وعدة الهوية للطباعة والتصميم</h1>
@@ -272,6 +275,96 @@ export function Brand() {
       </div>
       {message && <p className="notice ok">{message}</p>}
       {error && <p className="notice err">{error}</p>}
+    </form>
+    </div>
+  )
+}
+
+function AccountNames() {
+  const { user, refresh } = useAuth()
+  const [companyName, setCompanyName] = useState(user?.companyName ?? '')
+  const [name, setName] = useState(user?.name ?? '')
+  const [baseline, setBaseline] = useState({ companyName: user?.companyName ?? '', name: user?.name ?? '' })
+  const [canEditCompany, setCanEditCompany] = useState(user?.role === 'admin')
+  const [saving, setSaving] = useState(false)
+  const [message, setMessage] = useState('')
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    if (!user) return
+    let cancelled = false
+    void fetch('/api/account', { credentials: 'include' })
+      .then((response) => response.json())
+      .then((payload) => {
+        if (cancelled || !payload?.name) return
+        setCompanyName(payload.companyName || '')
+        setName(payload.name || '')
+        setBaseline({ companyName: payload.companyName || '', name: payload.name || '' })
+        setCanEditCompany(Boolean(payload.canEditCompany))
+      })
+      .catch(() => {
+        if (!cancelled) setError('تعذر تحميل بيانات الحساب.')
+      })
+    return () => { cancelled = true }
+  }, [user?.id])
+
+  async function onSubmit(event: FormEvent) {
+    event.preventDefault()
+    if (saving) return
+    setMessage('')
+    setError('')
+    if (name.trim().length < 2 || name.trim().length > 80) {
+      setError('اسم صاحب الحساب بين حرفين وثمانين حرفًا.')
+      return
+    }
+    if (canEditCompany && (companyName.trim().length < 2 || companyName.trim().length > 80)) {
+      setError('اسم الشركة بين حرفين وثمانين حرفًا.')
+      return
+    }
+    setSaving(true)
+    try {
+      const response = await fetch('/api/account', {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(canEditCompany ? { name: name.trim(), companyName: companyName.trim() } : { name: name.trim() }),
+      })
+      const payload = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(payload.error || 'تعذر حفظ بيانات الحساب.')
+      const next = { companyName: payload.user?.companyName || companyName, name: payload.user?.name || name }
+      setCompanyName(next.companyName)
+      setName(next.name)
+      setBaseline(next)
+      await refresh()
+      setMessage('حُفظ الاسم في الحساب، وسيظهر في الشريط والصفحات.')
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : 'تعذر حفظ بيانات الحساب.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <form className="stack card" onSubmit={onSubmit}>
+      <div className="section-head">
+        <h2>بيانات الحساب</h2>
+        <p className="muted">تعديل اسم الشركة واسم صاحب الحساب. لا يغيّر هذا النموذج الدور أو الصلاحيات.</p>
+      </div>
+      <label className="field" htmlFor="account-company-name">
+        <span>اسم الشركة</span>
+        <input id="account-company-name" value={companyName} onChange={(event) => setCompanyName(event.target.value)} disabled={!canEditCompany || saving} required={canEditCompany} />
+      </label>
+      {!canEditCompany && <p className="muted">اسم الشركة يظهر للجميع في الحساب، وتعديله متاح لحساب الشركة.</p>}
+      <label className="field" htmlFor="account-owner-name">
+        <span>اسم صاحب الحساب</span>
+        <input id="account-owner-name" value={name} onChange={(event) => setName(event.target.value)} disabled={saving} required />
+      </label>
+      <div className="hero-actions">
+        <button type="submit" className="btn btn-primary" disabled={saving} aria-busy={saving}>{saving ? 'جارٍ الحفظ…' : 'حفظ'}</button>
+        <button type="button" className="btn btn-ghost" disabled={saving} onClick={() => { setCompanyName(baseline.companyName); setName(baseline.name); setMessage(''); setError('') }}>إلغاء</button>
+      </div>
+      {message && <p className="notice ok" role="status">{message}</p>}
+      {error && <p className="notice err" role="alert">{error}</p>}
     </form>
   )
 }

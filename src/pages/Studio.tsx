@@ -4,6 +4,7 @@ import { featuredProductIds, productById, products } from '../data'
 import { PrintPreview } from '../components/PrintPreview'
 import { useStore } from '../store'
 import { useAuth } from '../auth'
+import { draftHasWork, prefillFromOccasion, type OccasionPrefill } from '../occasionPrefill'
 import { riyadhToday, upcomingDesignOccasions, type StudioOccasion } from '../studioOccasions'
 
 type SavedDesign = {
@@ -91,6 +92,7 @@ export function Studio() {
   const [eventsLoad, setEventsLoad] = useState(0)
   const previewRef = useRef<HTMLElement | null>(null)
   const textRef = useRef<HTMLTextAreaElement | null>(null)
+  const appliedOccasion = useRef('')
   const navigate = useNavigate()
   const product = productById(draft.productId) ?? products[0]
   const selected = occasions.find((item) => item.id === draft.eventId) ?? null
@@ -111,16 +113,48 @@ export function Studio() {
 
   useEffect(() => {
     const eventId = params.get('eventId')
-    if (!eventId) return
+    if (!eventId || eventsStatus !== 'ready' || appliedOccasion.current === eventId) return
+    const carried = (location.state as { prefill?: OccasionPrefill } | null)?.prefill
     const event = occasions.find((item) => item.id === eventId)
-    if (!event || (draft.eventId === event.id && draft.eventTitle === event.title)) return
+    const next = carried?.eventId === eventId
+      ? carried
+      : event
+        ? prefillFromOccasion({
+            id: event.id,
+            title: event.title,
+            date: event.date,
+            dateOfficial: event.dateOfficial,
+            audience: event.audience,
+            category: event.category,
+            companyName: brand.companyName,
+            slogan: brand.slogan,
+          })
+        : null
+    if (!next) return
+    if (draft.eventId === eventId && draft.headline.trim()) {
+      appliedOccasion.current = eventId
+      if (carried?.eventId === eventId) {
+        setAudience(carried.audience)
+        setNote(carried.imageNote)
+        setShowHelpful(true)
+      }
+      return
+    }
+    const product = productById(next.productId) ?? products[0]
     setDraft({
-      ...draft,
-      eventId: event.id,
-      eventTitle: event.title,
-      headline: draft.headline || event.title,
+      productId: product.id,
+      eventId: next.eventId,
+      eventTitle: next.eventTitle,
+      size: product.sizes[0],
+      headline: next.headline,
+      subhead: next.subhead,
+      body: next.body,
     })
-  }, [params, occasions])
+    setAudience(next.audience)
+    setNote(next.imageNote)
+    setShowHelpful(true)
+    appliedOccasion.current = eventId
+  }, [params, occasions, eventsStatus, location.state, brand.companyName, brand.slogan])
 
   useEffect(() => {
     if (!user || phase === 'review') return
@@ -193,13 +227,40 @@ export function Studio() {
   }
 
   function chooseEvent(eventId: string) {
+    if ((draft.eventId || '') === eventId) return
+    if (draftHasWork(draft) && !window.confirm('يوجد نص أو معاينة غير محفوظة. هل تستبدلها ببيانات المناسبة الجديدة؟')) return
     const event = occasions.find((item) => item.id === eventId)
-    setDraft({
-      ...draft,
-      eventId: event?.id || '',
-      eventTitle: event?.title || '',
-      headline: draft.headline || event?.title || '',
+    if (!event) {
+      setDraft({ ...draft, eventId: '', eventTitle: '', headline: '', subhead: '', body: '', generatedImageDataUrl: undefined, savedDesignId: undefined })
+      setAudience('')
+      setNote('')
+      appliedOccasion.current = ''
+      return
+    }
+    const next = prefillFromOccasion({
+      id: event.id,
+      title: event.title,
+      date: event.date,
+      dateOfficial: event.dateOfficial,
+      audience: event.audience,
+      category: event.category,
+      companyName: brand.companyName,
+      slogan: brand.slogan,
     })
+    const product = productById(next.productId) ?? products[0]
+    setDraft({
+      productId: product.id,
+      eventId: next.eventId,
+      eventTitle: next.eventTitle,
+      size: product.sizes[0],
+      headline: next.headline,
+      subhead: next.subhead,
+      body: next.body,
+    })
+    setAudience(next.audience)
+    setNote(next.imageNote)
+    setShowHelpful(true)
+    appliedOccasion.current = event.id
   }
 
   async function generateArtwork() {
@@ -239,6 +300,7 @@ export function Studio() {
         subhead: design.subhead,
         body: design.body,
         generatedImageDataUrl: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(design.svg)}`,
+        savedDesignId: design.id,
       })
       previewRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
     } catch (error) {

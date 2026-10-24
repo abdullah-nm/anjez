@@ -1,6 +1,7 @@
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
+import { storedCity } from '../../shared/cities.ts'
 import { newId } from '../lib/crypto.ts'
 import { AppError } from '../lib/errors.ts'
 import type { BrandProfile, CalendarSyncState, CompanyEventRecord, DateCertainty, DesignRecord, DesignStatus, NotificationRecord, SystemOccasionRecord } from './types.ts'
@@ -8,6 +9,13 @@ import type { BrandProfile, CalendarSyncState, CompanyEventRecord, DateCertainty
 function requireCompany(companyId: string) {
   if (!companyId?.trim()) throw new AppError('company scope required', 500, 'COMPANY_SCOPE_REQUIRED')
   return companyId
+}
+
+function countRows(db: DatabaseSync, sql: string) {
+  const counts = new Map<string, number>()
+  const rows = db.prepare(sql).all() as { company_id: string, total: number }[]
+  for (const row of rows) counts.set(row.company_id, Number(row.total) || 0)
+  return counts
 }
 
 export class PlatformStore {
@@ -87,6 +95,21 @@ export class PlatformStore {
         updated_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_designs_company ON designs(company_id, created_at);
+      CREATE TABLE IF NOT EXISTS print_orders (
+        company_id TEXT NOT NULL,
+        id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        user_name TEXT NOT NULL,
+        product_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        quantity INTEGER NOT NULL,
+        delivery_date TEXT NOT NULL,
+        delivery_city TEXT NOT NULL DEFAULT '',
+        design_id TEXT,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (company_id, id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_print_orders_company_time ON print_orders(company_id, created_at);
       CREATE TABLE IF NOT EXISTS notifications (
         id TEXT PRIMARY KEY,
         company_id TEXT NOT NULL,
@@ -101,6 +124,7 @@ export class PlatformStore {
       CREATE INDEX IF NOT EXISTS idx_notes_user ON notifications(company_id, user_id, created_at);
     `)
     this.migrateEvents()
+    this.migrateOrders()
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS reminder_deliveries (
         id TEXT PRIMARY KEY,
@@ -143,6 +167,12 @@ export class PlatformStore {
       );
     `)
     this.migrateReminders()
+  }
+
+  private migrateOrders() {
+    const info = this.db.prepare('PRAGMA table_info(print_orders)').all() as { name: string }[]
+    if (!info.length || info.some((column) => column.name === 'delivery_city')) return
+    this.db.exec(`ALTER TABLE print_orders ADD COLUMN delivery_city TEXT NOT NULL DEFAULT ''`)
   }
 
   private migrateReminders() {
@@ -329,6 +359,154 @@ export class PlatformStore {
   getDesign(companyId: string, id: string) {
     const row = this.db.prepare('SELECT * FROM designs WHERE id = ? AND company_id = ?').get(id, requireCompany(companyId)) as Record<string, unknown> | undefined
     return row ? mapDesign(row) : null
+  }
+
+  savePrintOrder(input: {
+    companyId: string
+    id: string
+    userId: string
+    userName: string
+    productId: string
+    quantity: number
+    deliveryDate: string
+    deliveryCity?: string | null
+    designId: string | null
+    createdAt: string
+  }) {
+    requireCompany(input.companyId)
+    this.db.prepare(
+      `INSERT OR IGNORE INTO print_orders (
+        company_id, id, user_id, user_name, product_id, status, quantity, delivery_date, delivery_city, design_id, created_at
+      ) VALUES (?, ?, ?, ?, ?, 'محفوظ', ?, ?, ?, ?, ?)`,
+    ).run(
+      input.companyId,
+      input.id,
+      input.userId,
+      input.userName.slice(0, 80),
+      input.productId,
+      input.quantity,
+      input.deliveryDate,
+      storedCity(input.deliveryCity),
+      input.designId,
+      input.createdAt,
+    )
+  }
+
+  listOrdersForAccount(companyId: string, userId: string) {
+    requireCompany(companyId)
+    return this.db.prepare(
+      `SELECT id, user_id, user_name, product_id, status, quantity, delivery_date, delivery_city, design_id, created_at
+       FROM print_orders
+       WHERE company_id = ? AND user_id = ?
+       ORDER BY created_at DESC`,
+    ).all(companyId, userId) as {
+      id: string
+      user_id: string
+      user_name: string
+      product_id: string
+      status: string
+      quantity: number
+      delivery_date: string
+      delivery_city: string
+      design_id: string | null
+      created_at: string
+    }[]
+  }
+
+  listPrintOrders(companyId: string, fromIso: string, toIso: string) {
+    requireCompany(companyId)
+    return this.db.prepare(
+      `SELECT id, user_id, user_name, product_id, status, quantity, delivery_date, delivery_city, design_id, created_at
+       FROM print_orders
+       WHERE company_id = ? AND created_at >= ? AND created_at <= ?
+       ORDER BY created_at DESC`,
+    ).all(companyId, fromIso, toIso) as {
+      id: string
+      user_name: string
+      product_id: string
+      status: string
+      quantity: number
+      delivery_date: string
+      delivery_city: string
+      design_id: string | null
+      created_at: string
+      user_id: string
+    }[]
+  }
+
+  orderCounts(companyIds: string[], fromIso: string, toIso: string) {
+    const ids = [...new Set(companyIds.map((id) => id.trim()).filter(Boolean))]
+    const counts = new Map<string, number>()
+    if (!ids.length) return counts
+    const marks = ids.map(() => '?').join(',')
+    const rows = this.db.prepare(
+      `SELECT company_id, COUNT(*) AS total
+       FROM print_orders
+       WHERE company_id IN (${marks}) AND created_at >= ? AND created_at <= ?
+       GROUP BY company_id`,
+    ).all(...ids, fromIso, toIso) as { company_id: string, total: number }[]
+    for (const row of rows) counts.set(row.company_id, Number(row.total) || 0)
+    return counts
+  }
+
+  countPrintOrders(companyId: string, fromIso: string, toIso: string) {
+    requireCompany(companyId)
+    const row = this.db.prepare(
+      `SELECT COUNT(*) AS total FROM print_orders WHERE company_id = ? AND created_at >= ? AND created_at < ?`,
+    ).get(companyId, fromIso, toIso) as { total: number }
+    return row.total
+  }
+
+  listPrintOrdersBetween(fromIso: string, toIso: string) {
+    return this.db.prepare(
+      `SELECT company_id, id, user_id, user_name, product_id, status, quantity, delivery_date, delivery_city, design_id, created_at
+       FROM print_orders
+       WHERE created_at >= ? AND created_at <= ?
+       ORDER BY created_at DESC`,
+    ).all(fromIso, toIso) as {
+      company_id: string
+      id: string
+      user_id: string
+      user_name: string
+      product_id: string
+      status: string
+      quantity: number
+      delivery_date: string
+      delivery_city: string
+      design_id: string | null
+      created_at: string
+    }[]
+  }
+
+  countPrintOrdersBetween(fromIso: string, toIso: string) {
+    const row = this.db.prepare(
+      `SELECT COUNT(*) AS total FROM print_orders WHERE created_at >= ? AND created_at < ?`,
+    ).get(fromIso, toIso) as { total: number }
+    return row.total
+  }
+
+  designCounts() {
+    return countRows(this.db, `SELECT company_id, COUNT(*) AS total FROM designs GROUP BY company_id`)
+  }
+
+  orderCountsAll() {
+    return countRows(this.db, `SELECT company_id, COUNT(*) AS total FROM print_orders GROUP BY company_id`)
+  }
+
+  designLinks(ids: string[]) {
+    const unique = [...new Set(ids.filter((id) => /^des_[a-f0-9]+$/.test(id)))]
+    if (!unique.length) return [] as { id: string, eventId: string | null }[]
+    const marks = unique.map(() => '?').join(',')
+    const rows = this.db.prepare(`SELECT id, event_id FROM designs WHERE id IN (${marks})`).all(...unique) as { id: string, event_id: string | null }[]
+    return rows.map((row) => ({ id: row.id, eventId: row.event_id ? String(row.event_id) : null }))
+  }
+
+  eventOccasionKeys(ids: string[]) {
+    const unique = [...new Set(ids.map((id) => id.trim()).filter((id) => id && !id.startsWith('sys:') && id.length <= 80))]
+    if (!unique.length) return [] as { id: string, occasionKey: string | null }[]
+    const marks = unique.map(() => '?').join(',')
+    const rows = this.db.prepare(`SELECT id, occasion_key FROM company_events WHERE id IN (${marks})`).all(...unique) as { id: string, occasion_key: string | null }[]
+    return rows.map((row) => ({ id: row.id, occasionKey: row.occasion_key ? String(row.occasion_key) : null }))
   }
 
   updateDesignStatus(companyId: string, id: string, status: DesignStatus) {

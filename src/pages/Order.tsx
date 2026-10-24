@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import { CITY_NAMES } from '../../shared/cities.ts'
 import { eventById, formatMoney, productById, products } from '../data'
 import { PrintPreview } from '../components/PrintPreview'
 import { useStore } from '../store'
@@ -19,6 +20,7 @@ export function Order() {
   const eventTitle = draft.eventTitle || catalogEvent?.title || 'بدون مناسبة'
   const [quantity, setQuantity] = useState(100)
   const [deliveryDate, setDeliveryDate] = useState(() => defaultDelivery(product.leadDays, catalogEvent?.date))
+  const [city, setCity] = useState('')
   const [address, setAddress] = useState(brand.city || '')
   const [notes, setNotes] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -32,12 +34,14 @@ export function Order() {
       size: draft.size,
       quantity,
       deliveryDate,
+      deliveryCity: city.trim(),
       address,
       notes,
       headline: draft.headline,
       subhead: draft.subhead,
       body: draft.body,
       eventTitle,
+      designId: draft.savedDesignId,
     })
     if (!order) {
       setError('لم يُحفظ الطلب. لم يتم تأكيد الإرسال.')
@@ -82,6 +86,20 @@ export function Order() {
             value={deliveryDate}
             onChange={(e) => setDeliveryDate(e.target.value)}
           />
+        </label>
+        <label className="field">
+          <span>مدينة التسليم</span>
+          <input
+            required
+            list="delivery-cities"
+            maxLength={80}
+            value={city}
+            placeholder="مثال: الرياض"
+            onChange={(e) => setCity(e.target.value)}
+          />
+          <datalist id="delivery-cities">
+            {CITY_NAMES.map((name) => <option key={name} value={name} />)}
+          </datalist>
         </label>
         <label className="field">
           <span>عنوان التسليم</span>

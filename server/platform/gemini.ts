@@ -1,5 +1,6 @@
 import type { EmbeddingProvider, LlmProvider } from '../types.ts'
 import { MissingProviderError } from '../lib/errors.ts'
+import { noteProviderAttempt, providerFailureCode } from '../observability/attempts.ts'
 import { noteGeminiFailure, noteGeminiUsage } from '../observability/context.ts'
 
 const GEMINI_ROOT = 'https://generativelanguage.googleapis.com/v1beta'
@@ -47,6 +48,11 @@ function modelPath(model: string) {
   return model.startsWith('models/') ? model.slice(7) : model
 }
 
+function modelFromPath(path: string) {
+  const match = /models\/([^:/?]+)/.exec(path)
+  return (match?.[1] || 'unknown').slice(0, 80)
+}
+
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
@@ -57,15 +63,34 @@ async function geminiPost(
   body: unknown,
   code: 'LLM_UNAVAILABLE' | 'EMBEDDINGS_UNAVAILABLE' | 'IMAGE_GENERATION_UNAVAILABLE',
 ) {
-  const response = await fetch(`${GEMINI_ROOT}/${path}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-goog-api-key': apiKey,
-    },
-    body: JSON.stringify(body),
-  })
+  const started = Date.now()
+  const model = modelFromPath(path)
+  let response: Response
+  try {
+    response = await fetch(`${GEMINI_ROOT}/${path}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': apiKey,
+      },
+      body: JSON.stringify(body),
+    })
+  } catch (error) {
+    noteProviderAttempt({
+      model,
+      httpStatus: 0,
+      durationMs: Date.now() - started,
+      failureCode: 'UNAVAILABLE',
+    })
+    throw error
+  }
   const raw = await response.text()
+  noteProviderAttempt({
+    model,
+    httpStatus: response.status,
+    durationMs: Date.now() - started,
+    failureCode: response.ok ? null : providerFailureCode(response.status),
+  })
   if (!response.ok) {
     noteGeminiFailure(response.status, 'http')
     const error = new MissingProviderError(code, `فشل Gemini (${response.status}). ${sanitizeGeminiDetail(raw)}`)

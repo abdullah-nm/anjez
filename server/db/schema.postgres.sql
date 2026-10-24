@@ -71,3 +71,5 @@ CREATE INDEX IF NOT EXISTS idx_audit_company ON audit_logs(company_id, at DESC);
 
 -- Retention: expired documents are hard-deleted with their chunks.
 -- Default expires_at = created_at + DOCUMENT_RETENTION_DAYS.
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS session_epoch INTEGER NOT NULL DEFAULT 0;
