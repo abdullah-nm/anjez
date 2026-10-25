@@ -1,8 +1,10 @@
 import { useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { CITY_NAMES } from '../../shared/cities.ts'
-import { eventById, formatMoney, productById, products } from '../data'
+import { eventById, productById, products } from '../data'
 import { PrintPreview } from '../components/PrintPreview'
+import { DateField } from '../components/DateField'
+import { useI18n } from '../i18n'
 import { useStore } from '../store'
 
 function defaultDelivery(leadDays: number, eventDate?: string) {
@@ -14,10 +16,11 @@ function defaultDelivery(leadDays: number, eventDate?: string) {
 
 export function Order() {
   const { brand, draft, placeOrder } = useStore()
+  const { t, productLabel, formatMoney, formatNumber, cityLabel } = useI18n()
   const navigate = useNavigate()
   const product = productById(draft.productId) ?? products[0]
   const catalogEvent = eventById(draft.eventId)
-  const eventTitle = draft.eventTitle || catalogEvent?.title || 'بدون مناسبة'
+  const eventTitle = draft.eventTitle || catalogEvent?.title || t('noOccasion')
   const [quantity, setQuantity] = useState(100)
   const [deliveryDate, setDeliveryDate] = useState(() => defaultDelivery(product.leadDays, catalogEvent?.date))
   const [city, setCity] = useState('')
@@ -25,10 +28,10 @@ export function Order() {
   const [notes, setNotes] = useState('')
   const [error, setError] = useState<string | null>(null)
 
-  function onSubmit(formEvent: FormEvent) {
+  async function onSubmit(formEvent: FormEvent) {
     formEvent.preventDefault()
     setError(null)
-    const order = placeOrder({
+    const order = await placeOrder({
       productId: product.id,
       eventId: draft.eventId,
       size: draft.size,
@@ -44,7 +47,7 @@ export function Order() {
       designId: draft.savedDesignId,
     })
     if (!order) {
-      setError('لم يُحفظ الطلب. لم يتم تأكيد الإرسال.')
+      setError(t('orderFailed'))
       return
     }
     navigate(`/order/${order.id}`)
@@ -54,21 +57,21 @@ export function Order() {
     <form className="studio" onSubmit={onSubmit}>
       <section className="stack">
         <div className="section-head">
-          <h1>طلب الطباعة</h1>
+          <h1>{t('orderTitle')}</h1>
         </div>
 
         <p>
-          المنتج: <strong>{product.name}</strong> · المقاس: <strong>{draft.size}</strong> · المناسبة: <strong>{eventTitle}</strong>
+          {t('productLine', { product: productLabel(product.id, product.name), size: draft.size, event: eventTitle })}
         </p>
         {!draft.generatedImageDataUrl && (
           <p className="notice">
-            لا توجد معاينة مولَّدة بعد. يمكنك <Link to="/studio">العودة للاستوديو</Link> أو حفظ الطلب بالنص الحالي.
+            {t('noPreview')} <Link to="/studio">{t('backStudio')}</Link>
           </p>
         )}
-        <p className="preview-caption">المعاينة ليست ملف طباعة.</p>
+        <p className="preview-caption">{t('previewNotFile')}</p>
 
         <label className="field">
-          <span>الكمية</span>
+          <span>{t('quantity')}</span>
           <input
             type="number"
             min={10}
@@ -79,30 +82,25 @@ export function Order() {
           />
         </label>
         <label className="field">
-          <span>تاريخ التسليم المطلوب</span>
-          <input
-            type="date"
-            required
-            value={deliveryDate}
-            onChange={(e) => setDeliveryDate(e.target.value)}
-          />
+          <span>{t('deliveryDate')}</span>
+          <DateField required value={deliveryDate} onChange={setDeliveryDate} />
         </label>
         <label className="field">
-          <span>مدينة التسليم</span>
+          <span>{t('deliveryCity')}</span>
           <input
             required
             list="delivery-cities"
             maxLength={80}
             value={city}
-            placeholder="مثال: الرياض"
+            placeholder={t('cityExample')}
             onChange={(e) => setCity(e.target.value)}
           />
           <datalist id="delivery-cities">
-            {CITY_NAMES.map((name) => <option key={name} value={name} />)}
+            {CITY_NAMES.map((name) => <option key={name} value={cityLabel(name)} />)}
           </datalist>
         </label>
         <label className="field">
-          <span>عنوان التسليم</span>
+          <span>{t('address')}</span>
           <textarea
             required
             rows={3}
@@ -111,30 +109,29 @@ export function Order() {
           />
         </label>
         <label className="field">
-          <span>ملاحظات للطباعة</span>
+          <span>{t('printNotes')}</span>
           <textarea
             rows={2}
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
-            placeholder="مثل: لمسة ذهبية على الاسم فقط"
+            placeholder={t('notesExample')}
           />
         </label>
 
         <p className="muted">
-          سعر الكتالوج للوحدة {formatMoney(product.fromPrice)} للاستئناس فقط، وليس عرض مطبعة.
-          المدة المعتادة في الكتالوج {product.leadDays} أيام عمل.
+          {t('catalogPrice', { price: formatMoney(product.fromPrice) })} {t('leadDays', { days: formatNumber(product.leadDays) })}
         </p>
 
         <button type="submit" className="btn btn-primary">
-          حفظ طلب المراجعة
+          {t('sendOrder')}
         </button>
         {error && <p className="notice err">{error}</p>}
       </section>
 
       <aside className="preview-panel card stack">
-        <p className="eyebrow">معاينة الشاشة · ليست ملف طباعة</p>
+        <p className="eyebrow">{t('screenPreview')}</p>
         <PrintPreview brand={brand} product={product} draft={draft} />
-        <p className="muted">يُحفظ الطلب على هذا الجهاز دون إرسال إلى مطبعة.</p>
+        <p className="muted">{t('orderStored')}</p>
       </aside>
     </form>
   )

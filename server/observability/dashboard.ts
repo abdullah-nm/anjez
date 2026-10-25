@@ -1,4 +1,5 @@
 import { groupCity } from '../../shared/cities.ts'
+import { isCompletedOrderStatus } from '../../shared/orderFlow.ts'
 import type { GenerationStatus, GenerationWindowRow } from './metrics.ts'
 import { occasionByKey } from '../platform/occasions.ts'
 
@@ -209,8 +210,7 @@ function bucketSize(from: number, to: number) {
   return to - from > 2 * DAY_MS ? DAY_MS : 60 * 60 * 1000
 }
 
-const OPEN_ORDER_STATUSES = ['محفوظ', 'قيد التجهيز'] as const
-const COMPLETE_ORDER_STATUS = 'مستلم'
+const OPEN_ORDER_STATUSES = ['محفوظ', 'قيد التجهيز', 'مسند', 'مقبول', 'مرفوض', 'قيد التنفيذ'] as const
 
 export function isRasterPreview(mime: string | null) {
   return mime === 'image/png' || mime === 'image/jpeg' || mime === 'image/jpg' || mime === 'image/webp'
@@ -293,8 +293,8 @@ export function activityBoard(input: {
   const previousImages = input.previousJobs.filter((job) => job.status === 'succeeded' && isRasterPreview(job.preview_mime)).length
   const succeededJobs = input.jobs.filter((job) => job.status === 'succeeded')
   const companiesThatGenerated = new Set(input.jobs.map((job) => job.company_id).filter(Boolean))
-  const completed = input.orders.filter((order) => order.status === COMPLETE_ORDER_STATUS)
-  const previousCompleted = input.previousOrders.filter((order) => order.status === COMPLETE_ORDER_STATUS)
+  const completed = input.orders.filter((order) => isCompletedOrderStatus(order.status))
+  const previousCompleted = input.previousOrders.filter((order) => isCompletedOrderStatus(order.status))
   const incomplete = input.orders.filter((order) => (OPEN_ORDER_STATUSES as readonly string[]).includes(order.status))
   const previousIncomplete = input.previousOrders.filter((order) => (OPEN_ORDER_STATUSES as readonly string[]).includes(order.status))
   const statusCounts = new Map<string, number>()
@@ -596,6 +596,8 @@ export type AttentionItem = {
   companyName: string
   subject: string
   reason: string
+  reasonCode: string
+  reasonVars: Record<string, string | number>
   at: string
 }
 
@@ -614,6 +616,7 @@ export function adminAttention(input: {
   const orders = input.orders.flatMap((order) => {
     const reason = orderNeedsFollowUp(order, { now: input.now, failedDesignIds: input.failedDesignIds })
     if (!reason) return []
+    const pastDelivery = Boolean(order.deliveryDate && order.deliveryDate < riyadhDate(input.now))
     const item: AttentionItem = {
       id: order.id,
       kind: 'order',
@@ -621,6 +624,8 @@ export function adminAttention(input: {
       companyName: nameOf(order.companyId, order.companyName),
       subject: order.id,
       reason,
+      reasonCode: pastDelivery ? 'DELIVERY_PASSED' : 'GENERATION_FAILED',
+      reasonVars: pastDelivery ? { date: String(order.deliveryDate) } : {},
       at: order.createdAt,
     }
     return [item]
@@ -632,6 +637,8 @@ export function adminAttention(input: {
     companyName: nameOf(job.company_id),
     subject: job.id,
     reason: failureLabel(job.failure_code || (job.status === 'timeout' ? 'TIMEOUT' : 'FAILED')),
+    reasonCode: job.failure_code || (job.status === 'timeout' ? 'TIMEOUT' : 'FAILED'),
+    reasonVars: {},
     at: new Date(job.finished_at ?? job.requested_at).toISOString(),
   }))
   const providerGroups = new Map<string, { attempts: number, jobs: Set<string>, companies: Set<string>, latest: number }>()
@@ -657,6 +664,8 @@ export function adminAttention(input: {
       companyName: companies.length === 1 ? nameOf(companies[0]) : 'عدة شركات',
       subject: label,
       reason: `${label} في ${calls} على ${operations}`,
+      reasonCode: 'PROVIDER_REPEAT',
+      reasonVars: { failure: code, calls: group.attempts, jobs: group.jobs.size },
       at: new Date(group.latest).toISOString(),
     }
     return [item]
@@ -665,7 +674,7 @@ export function adminAttention(input: {
 }
 
 export function orderNeedsFollowUp(order: PrintOrderRow, input: { now: number, failedDesignIds: Set<string> }) {
-  if (isCancelledOrder(order.status) || order.status === COMPLETE_ORDER_STATUS) return null
+  if (isCancelledOrder(order.status) || isCompletedOrderStatus(order.status)) return null
   if (order.designId && input.failedDesignIds.has(order.designId)) {
     return 'التوليد المرتبط بهذا الطلب فشل أو انتهت مهلته'
   }

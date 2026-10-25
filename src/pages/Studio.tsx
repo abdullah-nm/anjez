@@ -5,6 +5,7 @@ import { PrintPreview } from '../components/PrintPreview'
 import { useStore } from '../store'
 import { useAuth } from '../auth'
 import { draftHasWork, prefillFromOccasion, type OccasionPrefill } from '../occasionPrefill'
+import { useI18n, type MessageKey } from '../i18n'
 import { riyadhToday, upcomingDesignOccasions, type StudioOccasion } from '../studioOccasions'
 
 type SavedDesign = {
@@ -20,10 +21,30 @@ type SavedDesign = {
   status: string
 }
 
-const statusLabel: Record<string, string> = {
-  draft: 'مسودة',
-  approved: 'معتمد',
-  revision: 'يعاد تحريره',
+const designStatusKey: Record<string, MessageKey> = {
+  draft: 'draftStatus',
+  approved: 'approvedStatus',
+  revision: 'revisionStatus',
+}
+const toneKey: Record<string, MessageKey> = {
+  'فاخر': 'toneLuxury',
+  'رسمي': 'toneFormal',
+  'ودّي': 'toneFriendly',
+  'حيوي': 'toneLively',
+}
+const summaryKey: Record<string, MessageKey> = {
+  'prd-invite': 'productSummary_invite',
+  'prd-banner': 'productSummary_banner',
+  'prd-rollup': 'productSummary_rollup',
+  'prd-brochure': 'productSummary_brochure',
+  'prd-bag': 'productSummary_bag',
+  'prd-backdrop': 'productSummary_backdrop',
+  'prd-card': 'productSummary_card',
+  'prd-gift': 'productSummary_gift',
+  'prd-mug': 'productSummary_mug',
+  'prd-notebook': 'productSummary_notebook',
+  'prd-greeting': 'productSummary_greeting',
+  'prd-poster': 'productSummary_poster',
 }
 
 const tones = ['فاخر', 'رسمي', 'ودّي', 'حيوي'] as const
@@ -43,36 +64,25 @@ function shapeFor(productId: string) {
   return 'portrait'
 }
 
-function plainFailure(message: string) {
-  if (message.includes('429') || message.includes('quota')) {
-    return 'توقفت خلفية Gemini لأن حصة الاستخدام اكتملت. المعاينة الحالية قالب بالشعار والألوان.'
-  }
-  if (message.includes('401') || message.includes('403') || message.includes('API key')) {
-    return 'تعذر توليد الخلفية لأن مفتاح Gemini غير مقبول. بقي قالب الهوية.'
-  }
-  const sentence = message.split('{')[0].replace(/\s+/g, ' ').trim()
-  return sentence || 'تعذر توليد المعاينة. أعد المحاولة.'
+function plainFailure(message: string): MessageKey {
+  if (message.includes('429') || message.includes('quota')) return 'geminiQuota'
+  if (message.includes('401') || message.includes('403') || message.includes('API key')) return 'geminiAuth'
+  return 'generateFailed'
 }
 
-function previewSourceNote(kind: string, note: string) {
-  if (kind === 'ai_bitmap_background' && note.includes('مزود بديل')) {
-    return 'الخلفية من مزود بديل بعد تعذر Gemini. الشعار من ملف الهوية. أعد التوليد بعد 45 ثانية إن احتجت صورة أخرى.'
-  }
-  if (kind === 'ai_bitmap_background' && !note.includes('تعذر')) {
-    return 'الخلفية من Gemini. الشعار من ملف الهوية، وليس رسماً من النموذج.'
-  }
-  if (note.includes('429') || note.includes('quota')) {
-    return 'حصة توليد الصور في Gemini اكتملت. المعاينة قالب بالشعار والألوان حتى تتجدد الحصة.'
-  }
-  if (note.includes('تعذر')) {
-    return 'تعذر توليد الخلفية. المعاينة قالب بالشعار والألوان، ويمكن إعادة المحاولة.'
-  }
-  return 'قالب بهوية الشركة. هذه معاينة مراجعة، ليست ملفاً جاهزاً للطباعة.'
+function previewSourceNote(kind: string, note: string): MessageKey {
+  if (kind === 'ai_bitmap_background' && note.includes('مزود بديل')) return 'geminiAlternate'
+  if (note.includes('429') || note.includes('quota')) return 'geminiQuotaWait'
+  if (note.includes('401') || note.includes('403') || note.includes('FAILED')) return 'geminiFailed'
+  if (kind === 'ai_bitmap_background' && !note.includes('تعذر')) return 'geminiBackground'
+  if (note.includes('تعذر')) return 'geminiFailed'
+  return 'brandTemplate'
 }
 
 export function Studio() {
   const { brand, draft, setDraft } = useStore()
   const { user, loading } = useAuth()
+  const { t, locale, productLabel, errorText } = useI18n()
   const [params] = useSearchParams()
   const location = useLocation()
   const [note, setNote] = useState('')
@@ -181,14 +191,14 @@ export function Studio() {
         .then(async (response) => {
           const payload = await response.json().catch(() => null)
           if (!response.ok || typeof payload?.svg !== 'string') {
-            throw new Error(payload?.error || 'تعذر تحديث المعاينة.')
+            throw new Error(payload?.code || 'previewUpdateFailed')
           }
           setLiveSvg(payload.svg)
           setPreviewError('')
         })
         .catch((error: unknown) => {
           if (error instanceof DOMException && error.name === 'AbortError') return
-          setPreviewError(error instanceof Error ? error.message : 'تعذر تحديث المعاينة.')
+          setPreviewError(error instanceof Error ? errorText(error.message, t('previewUpdateFailed')) : t('previewUpdateFailed'))
         })
     }, 250)
     return () => {
@@ -205,7 +215,7 @@ export function Studio() {
     void fetch('/api/events', { credentials: 'include', signal: controller.signal })
       .then(async (response) => {
         const payload = await response.json().catch(() => null)
-        if (!response.ok) throw new Error(payload?.error || 'تعذر تحميل مناسبات التقويم.')
+        if (!response.ok) throw new Error('loadOccasionsFailed')
         if (controller.signal.aborted) return
         setOccasions(upcomingDesignOccasions(payload, riyadhToday()))
         setEventsStatus('ready')
@@ -213,7 +223,7 @@ export function Studio() {
       .catch((error: unknown) => {
         if (error instanceof DOMException && error.name === 'AbortError') return
         setEventsStatus('error')
-        setEventsError(error instanceof Error ? error.message : 'تعذر تحميل مناسبات التقويم.')
+        setEventsError(t('loadOccasionsFailed'))
       })
     return () => controller.abort()
   }, [user?.id, location.key, eventsLoad])
@@ -232,7 +242,7 @@ export function Studio() {
 
   function chooseEvent(eventId: string) {
     if ((draft.eventId || '') === eventId) return
-    if (draftHasWork(draft) && !window.confirm('يوجد نص أو معاينة غير محفوظة. هل تستبدلها ببيانات المناسبة الجديدة؟')) return
+    if (draftHasWork(draft) && !window.confirm(t('replaceDraft'))) return
     const event = occasions.find((item) => item.id === eventId)
     if (!event) {
       setDraft({ ...draft, eventId: '', eventTitle: '', headline: '', subhead: '', body: '', generatedImageDataUrl: undefined, savedDesignId: undefined })
@@ -292,7 +302,7 @@ export function Studio() {
         }),
       })
       const payload = await response.json()
-      if (!response.ok) throw new Error(payload.error || 'تعذر توليد التصميم.')
+      if (!response.ok) throw new Error(payload.code || 'generateFailed')
       const design = payload.design as SavedDesign
       setSaved((current) => [design, ...current.filter((item) => item.id !== design.id)])
       setActiveId(design.id)
@@ -308,7 +318,7 @@ export function Studio() {
       })
       previewRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
     } catch (error) {
-      setGenerationError(plainFailure(error instanceof Error ? error.message : ''))
+      setGenerationError(t(plainFailure(error instanceof Error ? error.message : '')))
     } finally {
       setGenerating(false)
     }
@@ -401,37 +411,37 @@ export function Studio() {
       <section className="stack">
         <div className="section-head">
           <div>
-            <h1>{phase === 'review' ? 'المعاينة' : 'المنتج والنص'}</h1>
+            <h1>{phase === 'review' ? t('studioPreview') : t('studioProduct')}</h1>
           </div>
         </div>
 
         <div className="brand-strip">
           {brand.logoUrl ? (
-            <img src={brand.logoUrl} alt={`شعار ${brand.companyName}`} />
+            <img src={brand.logoUrl} alt={t('logoOf', { name: brand.companyName })} />
           ) : (
             <span className="brand-fallback" aria-hidden="true">{brand.companyName.slice(0, 1)}</span>
           )}
           <div>
             <strong>{brand.companyName}</strong>
-            <p className="muted">من ملف الهوية</p>
+            <p className="muted">{t('fromBrand')}</p>
           </div>
-          <span className="swatch" style={{ background: brand.primaryColor }} title="اللون الأساسي" />
-          <span className="swatch" style={{ background: brand.accentColor }} title="لون الإبراز" />
-          {!brand.logoUrl && <Link to="/brand">أضف الشعار</Link>}
+          <span className="swatch" style={{ background: brand.primaryColor }} title={t('primaryColor')} />
+          <span className="swatch" style={{ background: brand.accentColor }} title={t('accentColor')} />
+          {!brand.logoUrl && <Link to="/brand">{t('addLogo')}</Link>}
         </div>
 
         {phase === 'review' && active ? (
           <div className="review-summary card">
-            <p><strong>{product.name}</strong> · {draft.size}</p>
+            <p><strong>{productLabel(product.id, product.name)}</strong> · {draft.size}</p>
             <p dir={textDir}>{headline}</p>
             <button type="button" className="btn btn-ghost" onClick={() => setPhase('compose')}>
-              تغيير المنتج أو النص
+              {t('changeProduct')}
             </button>
           </div>
         ) : (
           <>
             <fieldset>
-              <legend>المنتج</legend>
+              <legend>{t('product')}</legend>
               <div className="product-grid">
                 {catalog.map((item) => (
                   <button
@@ -443,43 +453,43 @@ export function Studio() {
                     onClick={() => chooseProduct(item.id)}
                   >
                     <span className={`silhouette sil-${shapeFor(item.id)}`} aria-hidden="true" />
-                    <span>{item.name}</span>
+                    <span>{productLabel(item.id, item.name)}</span>
                   </button>
                 ))}
               </div>
               {!showAllProducts && catalog.length < products.length && (
                 <button type="button" className="text-link advanced-toggle" onClick={() => setShowAllProducts(true)}>
-                  منتجات أخرى
+                  {t('otherProducts')}
                 </button>
               )}
-              <p className="muted">{product.summary}</p>
+              <p className="muted">{summaryKey[product.id] ? t(summaryKey[product.id]) : product.summary}</p>
             </fieldset>
 
             {user && (
               <div className="field">
-                <span>المناسبة</span>
-                {eventsStatus === 'loading' && <p className="muted">جارٍ تحميل مناسبات التقويم…</p>}
+                <span>{t('occasion')}</span>
+                {eventsStatus === 'loading' && <p className="muted">{t('occasionLoading')}</p>}
                 {eventsStatus === 'error' && (
                   <div className="notice err" role="alert">
                     <p>{eventsError}</p>
                     <button type="button" className="btn btn-secondary" onClick={() => setEventsLoad((value) => value + 1)}>
-                      إعادة المحاولة
+                      {t('retry')}
                     </button>
                   </div>
                 )}
                 {eventsStatus === 'ready' && (
                   <>
-                    <select value={selected?.id || ''} onChange={(event) => chooseEvent(event.target.value)} aria-label="المناسبة">
-                      <option value="">بدون مناسبة</option>
+                    <select value={selected?.id || ''} onChange={(event) => chooseEvent(event.target.value)} aria-label={t('occasion')}>
+                      <option value="">{t('noOccasion')}</option>
                       {occasions.map((item) => (
-                        <option key={item.id} value={item.id}>{item.title} · {item.date}</option>
+                        <option key={item.id} value={item.id}>{(locale === 'en' && item.titleEn ? item.titleEn : item.title)} · {item.date}</option>
                       ))}
                     </select>
-                    {selected && <p className="muted">المناسبة المحددة: {selected.title} · {selected.date}</p>}
+                    {selected && <p className="muted">{t('selectedOccasion')}: {(locale === 'en' && selected.titleEn ? selected.titleEn : selected.title)} · {selected.date}</p>}
                     {occasions.length === 0 && (
                       <p className="muted">
-                        لا مناسبات قادمة في تقويم الشركة.{' '}
-                        <Link to="/calendar">أضف مناسبة من التقويم</Link>
+                        {t('noFutureOccasions')}{' '}
+                        <Link to="/calendar">{t('addFromCalendar')}</Link>
                       </p>
                     )}
                   </>
@@ -488,25 +498,25 @@ export function Studio() {
             )}
 
             <label className="field">
-              <span>وصف النص</span>
+              <span>{t('copyDescription')}</span>
               <textarea
                 ref={textRef}
                 rows={3}
                 dir={textDir}
                 value={note}
                 onChange={(e) => setNote(e.target.value)}
-                placeholder="صف العبارة، مثل: تهنئة رمضانية قصيرة ودافئة للموظفين"
+                placeholder={t('copyDescriptionPlaceholder')}
               />
-              <p className="muted">لا تكتب العبارة النهائية. يولَّد النص من هذا الوصف ويظهر فوق التصميم.</p>
+              <p className="muted">{t('copyDescriptionHint')}</p>
             </label>
 
             <button type="button" className="text-link advanced-toggle" onClick={() => setShowHelpful((open) => !open)}>
-              {showHelpful ? 'إخفاء الخيارات الإضافية' : 'خيارات إضافية: المقاس، السطر الثاني، اللغة'}
+              {showHelpful ? t('hideOptions') : t('moreOptions')}
             </button>
             {showHelpful && (
               <div className="stack">
                 <label className="field">
-                  <span>المقاس</span>
+                  <span>{t('size')}</span>
                   <select value={draft.size} onChange={(e) => setDraft({ ...draft, size: e.target.value })}>
                     {product.sizes.map((size) => (
                       <option key={size} value={size}>{size}</option>
@@ -514,29 +524,29 @@ export function Studio() {
                   </select>
                 </label>
                 <label className="field">
-                  <span>الجمهور</span>
-                  <input value={audience} onChange={(e) => setAudience(e.target.value)} placeholder="اختياري" />
+                  <span>{t('audience')}</span>
+                  <input value={audience} onChange={(e) => setAudience(e.target.value)} placeholder={t('optional')} />
                 </label>
                 <label className="field">
-                  <span>سطر مساند</span>
+                  <span>{t('supportingLine')}</span>
                   <input dir={textDir} value={draft.subhead} onChange={(e) => setDraft({ ...draft, subhead: e.target.value })} />
                 </label>
-                <div className="tone-row" role="group" aria-label="النبرة">
+                <div className="tone-row" role="group" aria-label={t('tone')}>
                   {tones.map((item) => (
                     <button key={item} type="button" className={tone === item ? 'pick on' : 'pick'} aria-pressed={tone === item} onClick={() => setTone(item)}>
-                      {item}
+                      {t(toneKey[item])}
                     </button>
                   ))}
                 </div>
                 <label className="field">
-                  <span>لغة النص على التصميم</span>
+                  <span>{t('designLanguage')}</span>
                   <select value={language} onChange={(e) => setLanguage(e.target.value as 'ar' | 'en')}>
-                    <option value="ar">العربية</option>
+                    <option value="ar">{t('arabic')}</option>
                     <option value="en">English</option>
                   </select>
                 </label>
                 <label className="field">
-                  <span>ملاحظة اختيارية للمولّد</span>
+                  <span>{t('generatorNote')}</span>
                   <textarea rows={2} value={note} onChange={(e) => setNote(e.target.value)} />
                 </label>
               </div>
@@ -549,7 +559,7 @@ export function Studio() {
             <p>{generationError}</p>
             {user && (
               <button type="button" className="btn btn-secondary" disabled={generating} onClick={() => void generateArtwork()}>
-                إعادة المحاولة
+                {t('retry')}
               </button>
             )}
           </div>
@@ -559,7 +569,7 @@ export function Studio() {
           <div className="studio-cta">
             {!loading && !user ? (
               <Link className="btn btn-primary" to="/login" state={{ from: '/studio' }}>
-                سجّل الدخول ثم ولّد
+                {t('signInThenGenerate')}
               </Link>
             ) : (
               <button
@@ -568,22 +578,22 @@ export function Studio() {
                 disabled={loading || generating || (!note.trim() && !selected)}
                 onClick={() => void generateArtwork()}
               >
-                {generating ? 'جارٍ تجهيز المعاينة…' : 'ولّد المعاينة'}
+                {generating ? t('generatingPreview') : t('generatePreview')}
               </button>
             )}
-            {!user && !loading && <p className="muted">يلزم الدخول لحفظ التصميم على حساب الشركة.</p>}
+            {!user && !loading && <p className="muted">{t('loginToSaveDesign')}</p>}
           </div>
         )}
       </section>
 
       <aside className="preview-panel card stack canvas" ref={previewRef} aria-live="polite" aria-busy={generating}>
-        <p className="eyebrow">{generating ? 'جارٍ التوليد' : active ? 'معاينة الشاشة' : 'قبل التوليد'} · {product.name}</p>
-        <p className="preview-caption">معاينة فقط. ليست ملف طباعة.</p>
+        <p className="eyebrow">{generating ? t('generating') : active ? t('screenPreviewShort') : t('beforeGenerate')} · {productLabel(product.id, product.name)}</p>
+        <p className="preview-caption">{t('previewOnly')}</p>
         {previewError && phase === 'compose' && (
           <div className="notice err" role="alert">
             <p>{previewError}</p>
             <button type="button" className="btn btn-secondary" onClick={() => setPreviewAttempt((value) => value + 1)}>
-              إعادة المحاولة
+              {t('retry')}
             </button>
           </div>
         )}
@@ -596,30 +606,30 @@ export function Studio() {
             <PrintPreview brand={brand} product={product} draft={{ ...draft, headline, body: draft.subhead }} />
           )}
         </div>
-        {active && <p className="muted">{previewSourceNote(active.backgroundKind, active.backgroundNote)}</p>}
+        {active && <p className="muted">{t(previewSourceNote(active.backgroundKind, active.backgroundNote))}</p>}
         {active && phase === 'review' && (
           <>
-            <p>الحالة: {statusLabel[active.status] || 'مسودة'}</p>
+            <p>{t('statusLine', { status: t(designStatusKey[active.status] || 'draftStatus') })}</p>
             <div className="hero-actions">
-              <button type="button" className="btn btn-primary" onClick={continueToOrder}>طلب طباعة</button>
-              <button type="button" className="btn btn-secondary" onClick={() => download(active, 'png')}>تنزيل معاينة PNG</button>
+              <button type="button" className="btn btn-primary" onClick={continueToOrder}>{t('printRequest')}</button>
+              <button type="button" className="btn btn-secondary" onClick={() => download(active, 'png')}>{t('downloadPng')}</button>
             </div>
             <div className="hero-actions">
               <button type="button" className="btn btn-ghost" disabled={generating} onClick={() => void generateArtwork()}>
-                أعد التوليد
+                {t('regenerate')}
               </button>
-              <button type="button" className="btn btn-ghost" onClick={() => revise(active)}>عدّل النص</button>
-              <button type="button" className="btn btn-ghost" onClick={() => download(active, 'svg')}>تنزيل SVG للتحرير</button>
-              <button type="button" className="btn btn-ghost" onClick={() => void setStatus(active.id, 'approved')}>اعتماد المعاينة</button>
+              <button type="button" className="btn btn-ghost" onClick={() => revise(active)}>{t('editText')}</button>
+              <button type="button" className="btn btn-ghost" onClick={() => download(active, 'svg')}>{t('downloadSvg')}</button>
+              <button type="button" className="btn btn-ghost" onClick={() => void setStatus(active.id, 'approved')}>{t('approvePreview')}</button>
             </div>
           </>
         )}
         {saved.length > 0 && phase === 'compose' && (
           <div className="past-list">
-            <p className="muted">أكمل من معاينة سابقة</p>
+            <p className="muted">{t('continueEarlier')}</p>
             {saved.slice(0, 3).map((design) => (
               <button key={design.id} type="button" className="text-link" onClick={() => resume(design)}>
-                {design.headline} · {statusLabel[design.status] || 'مسودة'}
+                {design.headline} · {t(designStatusKey[design.status] || 'draftStatus')}
               </button>
             ))}
           </div>

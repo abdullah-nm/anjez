@@ -1,6 +1,7 @@
 import { type FormEvent, useEffect, useState } from 'react'
 import { Link, Navigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../auth'
+import { useI18n } from '../i18n'
 
 type KnowledgeDocument = {
   id: string
@@ -24,20 +25,22 @@ type AskResult = {
   }[]
 }
 
-const statusLabel: Record<string, string> = {
-  pending: 'بانتظار المعالجة',
-  processing: 'جارٍ الفهرسة',
-  ready: 'جاهز',
-  error: 'فشل الفهرسة',
-  unsupported: 'ملف غير مدعوم',
+const statusKey: Record<string, 'docPending' | 'docProcessing' | 'docReady' | 'docError' | 'docUnsupported'> = {
+  pending: 'docPending',
+  processing: 'docProcessing',
+  ready: 'docReady',
+  error: 'docError',
+  unsupported: 'docUnsupported',
 }
 
 export function Knowledge() {
   const { user, rag, loading } = useAuth()
+  const { t, errorText, formatNumber } = useI18n()
+  const [fileName, setFileName] = useState('')
   const location = useLocation()
   const [documents, setDocuments] = useState<KnowledgeDocument[]>([])
   const [error, setError] = useState<string | null>(null)
-  const [question, setQuestion] = useState('ما سياسة بطاقات الدعوة في شركتنا؟')
+  const [question, setQuestion] = useState('')
   const [result, setResult] = useState<AskResult | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -46,14 +49,14 @@ export function Knowledge() {
     void loadDocuments()
   }, [user])
 
-  if (loading) return <p>جارٍ التحقق من الجلسة…</p>
+  if (loading) return <p>{t('checkingSession')}</p>
   if (!user) return <Navigate to="/login" replace state={{ from: location.pathname }} />
 
   async function loadDocuments() {
     const response = await fetch('/api/knowledge/documents', { credentials: 'include' })
     const payload = await response.json()
     if (!response.ok) {
-      setError(payload.error || 'تعذر تحميل المستندات.')
+      setError(errorText(payload.code, t('loadDocsFailed')))
       return
     }
     setDocuments(payload.documents)
@@ -65,7 +68,7 @@ export function Knowledge() {
     const input = event.currentTarget.elements.namedItem('file') as HTMLInputElement
     const file = input.files?.[0]
     if (!file) {
-      setError('اختر ملفاً أولاً.')
+      setError(t('chooseFileFirst'))
       return
     }
     const body = new FormData()
@@ -79,13 +82,10 @@ export function Knowledge() {
     const payload = await response.json()
     setBusy(false)
     input.value = ''
+    setFileName('')
     await loadDocuments()
     if (!response.ok || payload.document?.status !== 'ready') {
-      setError(
-        payload.document?.errorMessage ||
-          payload.error ||
-          'رُفع الملف لكن الفهرسة لم تكتمل.',
-      )
+      setError(errorText(payload.document?.errorCode || payload.code, t('indexIncomplete')))
     }
   }
 
@@ -98,7 +98,7 @@ export function Knowledge() {
     })
     const payload = await response.json()
     setBusy(false)
-    if (!response.ok) setError(payload.error || 'تعذرت إعادة الفهرسة.')
+    if (!response.ok) setError(errorText(payload.code, t('reindexFailed')))
     await loadDocuments()
   }
 
@@ -111,7 +111,7 @@ export function Knowledge() {
     })
     const payload = await response.json()
     setBusy(false)
-    if (!response.ok) setError(payload.error || 'تعذر الحذف.')
+    if (!response.ok) setError(errorText(payload.code, t('deleteFailed')))
     await loadDocuments()
   }
 
@@ -136,7 +136,7 @@ export function Knowledge() {
       })
     }
     if (!response.ok) {
-      setError(payload.error || 'تعذر الاسترجاع.')
+      setError(errorText(payload.code, t('askFailed')))
     }
   }
 
@@ -144,60 +144,59 @@ export function Knowledge() {
     <div className="stack">
       <section className="hero-panel">
         <div>
-          <p className="eyebrow">معرفة {user.companyName}</p>
-          <h1>مستندات معزولة، واسترجاع دلالي داخل شركتك فقط</h1>
-          <p className="lede">
-            الملفات المدعومة: txt, md, csv, pdf, docx, html. المتجهات تُفلتر في
-            الخادم حسب جلسة {user.email}.
-          </p>
+          <p className="eyebrow">{t('knowledgeEyebrow', { company: user.companyName })}</p>
+          <h1>{t('knowledgeTitle')}</h1>
+          <p className="lede">{t('knowledgeFiles')}</p>
         </div>
       </section>
 
       {rag && !rag.embeddingsConfigured && (
         <p className="notice err">
-          مزود التضمين غير مضبوط ({rag.missing.join('، ')}). الرفع ممكن لكن
-          الفهرسة لن تكتمل حتى تُضاف المفاتيح. راجع README.
+          {t('embeddingsMissing', { missing: rag.missing.join(', ') })}
         </p>
       )}
       {rag && rag.embeddingsConfigured && !rag.llmConfigured && (
         <p className="notice">
-          التضمين جاهز. مزود اللغة غير مضبوط: ستظهر المصادر دون إجابة مولَّدة.
+          {t('llmMissing')}
         </p>
       )}
 
       <form className="card stack" onSubmit={onUpload}>
-        <h2>رفع مستند</h2>
-        <input name="file" type="file" accept=".txt,.md,.csv,.pdf,.docx,.html,.htm" />
+        <h2>{t('uploadDocument')}</h2>
+        <label className="file-pick">
+          <input className="file-native" name="file" type="file" accept=".txt,.md,.csv,.pdf,.docx,.html,.htm" onChange={(event) => setFileName(event.target.files?.[0]?.name || '')} />
+          <span className="btn btn-ghost">{t('chooseFile')}</span>
+          <span>{fileName || t('noFileChosen')}</span>
+        </label>
         <button className="btn btn-primary" type="submit" disabled={busy}>
-          رفع وفهرسة
+          {t('uploadIndex')}
         </button>
       </form>
 
       <section className="stack">
         <div className="section-head">
-          <h2>مستندات الشركة</h2>
+          <h2>{t('companyDocuments')}</h2>
           <button type="button" className="btn btn-ghost" onClick={() => void loadDocuments()}>
-            تحديث الحالة
+            {t('refreshStatus')}
           </button>
         </div>
-        {documents.length === 0 && <p className="muted">لا مستندات بعد.</p>}
+        {documents.length === 0 && <p className="muted">{t('noDocuments')}</p>}
         {documents.map((doc) => (
           <article key={doc.id} className="card rec-card">
             <div>
               <h3>{doc.filename}</h3>
               <p>
-                {statusLabel[doc.status] || doc.status}
-                {doc.errorCode ? ` (${doc.errorCode})` : ''} · {doc.chunkCount} مقطع ·{' '}
-                {Math.round(doc.byteSize / 1024)} ك.ب
+                {statusKey[doc.status] ? t(statusKey[doc.status]) : doc.status}
+                {doc.errorCode ? ` (${doc.errorCode})` : ''} · {formatNumber(doc.chunkCount)} {t('chunk')} · {formatNumber(Math.round(doc.byteSize / 1024))} {t('fileKb')}
               </p>
-              {doc.errorMessage && <p className="notice err">{doc.errorMessage}</p>}
+              {doc.errorCode && <p className="notice err">{errorText(doc.errorCode)}</p>}
             </div>
             <div className="hero-actions">
               <button type="button" className="btn btn-secondary" disabled={busy} onClick={() => void reindex(doc.id)}>
-                إعادة الفهرسة
+                {t('reindex')}
               </button>
               <button type="button" className="btn btn-ghost" disabled={busy} onClick={() => void remove(doc.id)}>
-                حذف
+                {t('delete')}
               </button>
             </div>
           </article>
@@ -205,29 +204,29 @@ export function Knowledge() {
       </section>
 
       <form className="card stack" onSubmit={ask}>
-        <h2>اسأل معرفة الشركة</h2>
+        <h2>{t('askKnowledge')}</h2>
         <label className="field">
-          <span>السؤال</span>
-          <textarea rows={3} value={question} onChange={(e) => setQuestion(e.target.value)} />
+          <span>{t('question')}</span>
+          <textarea rows={3} value={question} placeholder={t('questionPlaceholder')} onChange={(e) => setQuestion(e.target.value)} />
         </label>
         <button className="btn btn-primary" type="submit" disabled={busy}>
-          استرجاع وإجابة
+          {t('ask')}
         </button>
       </form>
 
       {result && (
         <section className="card stack">
-          <h2>الإجابة</h2>
+          <h2>{t('answer')}</h2>
           <p>{result.answer}</p>
           {result.insufficient && (
-            <p className="muted">المصادر غير كافية أو التوليد غير متاح؛ لا تخمين.</p>
+            <p className="muted">{t('insufficient')}</p>
           )}
-          <h3>المصادر</h3>
-          {result.sources.length === 0 && <p className="muted">لا مقاطع ضمن نطاق شركتك.</p>}
+          <h3>{t('sources')}</h3>
+          {result.sources.length === 0 && <p className="muted">{t('noChunks')}</p>}
           {result.sources.map((source) => (
             <article key={`${source.filename}-${source.chunkIndex}`} className="compact">
               <strong>
-                {source.filename} · مقطع {source.chunkIndex + 1}
+                {source.filename} · {t('chunk')} {formatNumber(source.chunkIndex + 1)}
               </strong>
               <p className="muted">{source.excerpt}</p>
             </article>
@@ -237,7 +236,7 @@ export function Knowledge() {
 
       {error && <p className="notice err">{error}</p>}
       <p className="muted">
-        <Link to="/home">العودة للوحة</Link>
+        <Link to="/home">{t('backHome')}</Link>
       </p>
     </div>
   )

@@ -67,6 +67,41 @@ export async function registerCompany(
   return loginUser(store, email, input.password, secret, ttlMs)
 }
 
+export async function registerProvider(
+  store: KnowledgeStore,
+  input: { displayName: string, email: string, password: string, confirm: string },
+  secret: string,
+  ttlMs: number,
+) {
+  const displayName = input.displayName.trim()
+  const email = input.email.trim().toLowerCase()
+  if (displayName.length < 2 || displayName.length > 80) {
+    throw new AppError('أدخل الاسم بين حرفين وثمانين حرفًا.', 400, 'INVALID_NAME')
+  }
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 160) {
+    throw new AppError('البريد الإلكتروني غير صالح.', 400, 'INVALID_EMAIL')
+  }
+  if (!input.password || input.password.length < 8 || input.password.length > 200) {
+    throw new AppError('كلمة المرور يجب أن تكون 8 أحرف على الأقل.', 400, 'WEAK_PASSWORD')
+  }
+  if (input.password !== input.confirm) {
+    throw new AppError('تأكيد كلمة المرور غير مطابق.', 400, 'PASSWORD_MISMATCH')
+  }
+  const userId = newId('user')
+  await store.createProviderAccount({
+    userId,
+    email,
+    name: displayName,
+    passwordHash: hashPassword(input.password),
+  })
+  const created = await store.getUserById(userId)
+  if (!created || created.role !== 'provider' || created.companyId) {
+    await store.deleteUser(userId)
+    throw new AppError('تعذر حفظ حساب مقدم الخدمة.', 500, 'REGISTER_FAILED')
+  }
+  return { userId, session: await loginUser(store, email, input.password, secret, ttlMs) }
+}
+
 export async function userFromRequest(
   store: KnowledgeStore,
   req: Request,

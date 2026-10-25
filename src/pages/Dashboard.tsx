@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { formatDate, productById } from '../data'
+import { productById } from '../data'
 import { draftHasWork, prefillFromOccasion } from '../occasionPrefill'
 import { useStore } from '../store'
 import { useAuth } from '../auth'
+import { useI18n } from '../i18n'
 
 type LiveEvent = {
   id: string
@@ -24,27 +25,28 @@ function remaining(ymd: string) {
 }
 
 export function Dashboard() {
+  const { t, formatDate, productLabel, statusLabel, countText, occasionLabel } = useI18n()
   const { draft, setDraft, orders } = useStore()
   const { user, loading } = useAuth()
   const navigate = useNavigate()
   const [liveEvents, setLiveEvents] = useState<LiveEvent[]>([])
   const [unread, setUnread] = useState(0)
   const [eventsReady, setEventsReady] = useState(false)
-  const [eventsError, setEventsError] = useState('')
+  const [eventsError, setEventsError] = useState(false)
   const [loadKey, setLoadKey] = useState(0)
 
   useEffect(() => {
     if (!user) return
     let cancelled = false
     setEventsReady(false)
-    setEventsError('')
+    setEventsError(false)
     void (async () => {
       try {
         const [eventsResponse, notesResponse] = await Promise.all([
           fetch('/api/events', { credentials: 'include' }),
           fetch('/api/notifications', { credentials: 'include' }),
         ])
-        if (!eventsResponse.ok || !notesResponse.ok) throw new Error('تعذر تحميل المناسبات والتنبيهات.')
+        if (!eventsResponse.ok || !notesResponse.ok) throw new Error('load')
         const eventsPayload = await eventsResponse.json()
         const notesPayload = await notesResponse.json()
         if (cancelled) return
@@ -57,12 +59,14 @@ export function Dashboard() {
           id: string
           title?: string
           titleAr?: string
+          key?: string
           date: string
           category: string
           dateCertainty?: string
         }) => ({
           id: event.id,
           title: event.titleAr || event.title || '',
+          occasionKey: event.key || null,
           date: event.date,
           audience: '',
           category: event.category,
@@ -75,7 +79,7 @@ export function Dashboard() {
         setEventsReady(true)
       } catch (error) {
         if (cancelled) return
-        setEventsError(error instanceof Error ? error.message : 'تعذر تحميل المناسبات والتنبيهات.')
+        setEventsError(true)
         setEventsReady(true)
       }
     })()
@@ -97,7 +101,7 @@ export function Dashboard() {
     const product = productById(next.productId) ?? productById('prd-poster')
     if (!product) return
     if (draftHasWork(draft) && draft.eventId !== event.id) {
-      const replace = window.confirm('يوجد نص أو معاينة غير محفوظة في الاستوديو. هل تستبدلها ببيانات هذه المناسبة؟')
+      const replace = window.confirm(t('replaceDraft'))
       if (!replace) return
     }
     setDraft({
@@ -117,35 +121,35 @@ export function Dashboard() {
     .sort((a, b) => String(a.date).localeCompare(String(b.date)))
     .slice(0, 6)
 
-  if (loading || !eventsReady) return <p>جارٍ التحميل…</p>
+  if (loading || !eventsReady) return <p>{t('loading')}</p>
 
   return (
     <div className="stack">
       <section className="section-head">
-        <h1>تصميم جديد</h1>
-        <Link className="btn btn-primary" to="/studio">ابدأ</Link>
+        <h1>{t('designNew')}</h1>
+        <Link className="btn btn-primary" to="/studio">{t('start')}</Link>
       </section>
 
       {unread > 0 && (
         <p className="notice">
-          لديك {unread} تنبيه غير مقروء. <Link to="/notifications">مركز التنبيهات</Link>
+          {countText('unreadAlerts', unread)} <Link to="/notifications">{t('navAlerts')}</Link>
         </p>
       )}
 
       <section>
         <div className="section-head">
-          <h2>أقرب المناسبات</h2>
+          <h2>{t('upcoming')}</h2>
         </div>
         {eventsError ? (
           <div className="notice err" role="alert">
-            <p>{eventsError}</p>
+            <p>{t('loadEventsFailed')}</p>
             <button type="button" className="btn btn-secondary" onClick={() => setLoadKey((value) => value + 1)}>
-              إعادة المحاولة
+              {t('retry')}
             </button>
           </div>
         ) : (
         <div className="event-grid">
-          {upcoming.length === 0 && <p className="muted">لا مناسبات قادمة. أضف من التقويم.</p>}
+          {upcoming.length === 0 && <p className="muted">{t('noUpcoming')}</p>}
           {upcoming.map((event) => {
             if (!event.date) return null
             const days = remaining(event.date)
@@ -153,17 +157,17 @@ export function Dashboard() {
             return (
               <article key={event.id} className="card event-card">
                 <p className="eyebrow">{formatDate(event.date)}</p>
-                <h3>{event.title}</h3>
-                <p>{days >= 0 ? `متبقي ${days} يوم` : 'اليوم أو فات الموعد'}</p>
+                <h3>{event.scope === 'system' ? occasionLabel(event.occasionKey, event.title) : event.title}</h3>
+                <p>{days >= 0 ? countText('daysLeft', days) : t('dueOrPast')}</p>
                 <p className="muted">
-                  {event.scope === 'system' ? 'مناسبة عامة' : 'مناسبة الشركة'}
-                  {event.dateCertainty === 'estimated' ? ' · تقديري' : ''}
-                  {event.dateCertainty === 'unannounced' ? ' · بانتظار الإعلان' : ''}
-                  {event.reminderDays.length ? ` · تذكير قبل ${event.reminderDays.join('، ')} يوم` : ' · بلا تذكير قبل التأكيد'}
-                  {' · مقترح: '}{product?.name}
+                  {event.scope === 'system' ? t('publicOccasion') : t('companyOccasion')}
+                  {event.dateCertainty === 'estimated' ? ` · ${t('estimated')}` : ''}
+                  {event.dateCertainty === 'unannounced' ? ` · ${t('unannounced')}` : ''}
+                  {event.reminderDays.length ? ` · ${t('reminderBefore', { days: event.reminderDays.join(' · ') })}` : ` · ${t('noReminderUntil')}`}
+                  {` · ${t('suggested')}: `}{product ? productLabel(product.id, product.name) : ''}
                 </p>
                 <button type="button" className="btn btn-secondary" onClick={() => openStudio(event)}>
-                  صمم لهذه المناسبة
+                  {t('designForOccasion')}
                 </button>
               </article>
             )
@@ -175,7 +179,7 @@ export function Dashboard() {
       {orders.length > 0 && (
         <ul className="order-mini">
           {orders.slice(0, 3).map((order) => (
-            <li key={order.id}><strong>{order.id}</strong><span>{order.status}</span></li>
+            <li key={order.id}><strong>{order.id}</strong><span>{statusLabel(order.status)}</span></li>
           ))}
         </ul>
       )}

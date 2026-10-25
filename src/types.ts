@@ -81,5 +81,8 @@ export interface PrintOrder {
   subhead: string
   body: string
   eventTitle?: string
-  status: 'مستلم' | 'قيد التجهيز' | 'محفوظ'
+  status: string
+  providerName?: string
+  statusNote?: string
+  events?: { id: string, fromStatus: string | null, toStatus: string, note: string, createdAt: string }[]
 }

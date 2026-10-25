@@ -25,6 +25,9 @@
 html {
   direction: rtl;
 }
+html[dir='ltr'] {
+  direction: ltr;
+}
 
 body {
   margin: 0;
@@ -581,6 +584,41 @@ summary:focus-visible {
   font-size: 0.92rem;
 }
 
+.date-field,
+.file-pick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  align-items: center;
+}
+
+.date-field select {
+  flex: 1;
+  min-width: 5.5rem;
+}
+
+.file-native {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+
+.file-pick {
+  position: relative;
+}
+
+.cal-head {
+  font-size: 0.78rem;
+  color: var(--muted);
+  text-align: center;
+}
+
+.cal-today {
+  outline: 2px solid #1d4ed8;
+}
+
 .field input,
 .field select,
 .field textarea {
@@ -598,7 +636,7 @@ summary:focus-visible {
 }
 
 .suggest-chip {
-  text-align: right;
+  text-align: start;
   border: 1px dashed var(--gold);
   background: #fbf6ec;
   border-radius: 0.8rem;
@@ -1718,7 +1756,9 @@ legend {
 .dash-jobs { margin: 0.5rem 0 0; padding: 0; list-style: none; display: grid; gap: 0.25rem; }
 .dash-fold summary { cursor: pointer; font-weight: 700; }
 .dash-fold-body { display: grid; gap: 0.35rem; margin-top: 0.6rem; color: #334155; }
-.dash-tip { background: white; border: 1px solid #e6edf5; border-radius: 0.6rem; padding: 0.4rem 0.55rem; direction: rtl; box-shadow: 0 8px 20px rgba(15, 39, 68, 0.08); }
+.dash-tip { background: white; border: 1px solid #e6edf5; border-radius: 0.6rem; padding: 0.4rem 0.55rem; direction: inherit; box-shadow: 0 8px 20px rgba(15, 39, 68, 0.08); }
+.check-row { display: flex; align-items: center; gap: 0.45rem; min-height: 2rem; }
+.lang-toggle { white-space: nowrap; }
 .dash-tip p { margin: 0; display: flex; gap: 0.35rem; align-items: center; }
 .dash-loading { padding: 1.5rem; }
 .company-facts { display: grid; gap: 0.25rem; }

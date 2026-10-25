@@ -40,7 +40,7 @@ interface AppStore {
   draft: DesignDraft
   setDraft: (next: DesignDraft) => void
   orders: PrintOrder[]
-  placeOrder: (order: Omit<PrintOrder, 'id' | 'createdAt' | 'status'> & { designId?: string }) => PrintOrder | null
+  placeOrder: (order: Omit<PrintOrder, 'id' | 'createdAt' | 'status'> & { designId?: string }) => Promise<PrintOrder | null>
 }
 
 const StoreContext = createContext<AppStore | null>(null)
@@ -125,22 +125,27 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         setOrders((current) => {
           const merged = new Map(current.map((order) => [order.id, order]))
           for (const order of remote) {
-            if (!order.id || merged.has(order.id)) continue
+            if (!order.id) continue
+            const existing = merged.get(order.id)
             merged.set(order.id, {
               id: order.id,
-              createdAt: order.createdAt || new Date().toISOString(),
-              productId: order.productId || '',
-              eventId: order.eventId || '',
-              size: order.size || '',
-              quantity: order.quantity || 1,
-              deliveryDate: order.deliveryDate || '',
-              address: order.address || '',
-              deliveryCity: order.deliveryCity || '',
-              notes: order.notes || '',
-              headline: order.headline || '',
-              subhead: order.subhead || '',
-              body: order.body || '',
-              status: order.status || 'محفوظ',
+              createdAt: order.createdAt || existing?.createdAt || new Date().toISOString(),
+              productId: order.productId || existing?.productId || '',
+              eventId: existing?.eventId || order.eventId || '',
+              size: existing?.size || order.size || '',
+              quantity: order.quantity || existing?.quantity || 1,
+              deliveryDate: order.deliveryDate || existing?.deliveryDate || '',
+              address: existing?.address || order.address || '',
+              deliveryCity: order.deliveryCity || existing?.deliveryCity || '',
+              notes: existing?.notes || order.notes || '',
+              headline: existing?.headline || order.headline || '',
+              subhead: existing?.subhead || order.subhead || '',
+              body: existing?.body || order.body || '',
+              eventTitle: existing?.eventTitle,
+              status: order.status || existing?.status || 'محفوظ',
+              providerName: order.providerName || '',
+              statusNote: order.statusNote || '',
+              events: order.events || [],
             })
           }
           const next = [...merged.values()].sort((left, right) => right.createdAt.localeCompare(left.createdAt))
@@ -179,8 +184,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         }
       },
       orders,
-      placeOrder: (input) => {
-        if (!user) return null
+      placeOrder: async (input) => {
+        if (!user || user.role === 'provider') return null
         const { designId, ...rest } = input
         const order: PrintOrder = {
           ...rest,
@@ -188,7 +193,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           createdAt: new Date().toISOString(),
           status: 'محفوظ',
         }
-        void fetch('/api/orders', {
+        const response = await fetch('/api/orders', {
           method: 'POST',
           credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
@@ -200,15 +205,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             deliveryCity: order.deliveryCity || '',
             designId: designId ?? null,
           }),
-        }).catch(() => undefined)
+        }).catch(() => null)
+        if (!response?.ok) return null
+        const next = [order, ...orders]
+        setOrders(next)
         try {
-          const next = [order, ...orders]
           localStorage.setItem(`${ORDERS_KEY}:${user.id}`, JSON.stringify(next))
-          setOrders(next)
-          return order
         } catch {
-          return null
+          /* the server copy is the source of truth */
         }
+        return order
       },
     }),
     [brand, draft, orders, user],

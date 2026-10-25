@@ -89,11 +89,11 @@ describe('saudi occasion calendar', () => {
     const season = first.body.systemOccasions.find((item: { key: string }) => item.key === 'riyadh-season')
     expect(founding.date.endsWith('-02-22')).toBe(true)
     expect(founding.dateCertainty).toBe('official')
-    expect(founding.source).toContain('ميلادي')
+    expect(founding.source).toBe('fixed-gregorian')
     expect(founding.checkedAt).toBeTruthy()
     expect(ramadan.dateCertainty).toBe('estimated')
     expect(ramadan.date).toMatch(/^\d{4}-\d{2}-\d{2}$/)
-    expect(ramadan.source).toContain('أم القرى')
+    expect(ramadan.source).toBe('umalqura')
     expect(season.date).toBeNull()
     expect(season.dateCertainty).toBe('unannounced')
     expect(first.body.events.some((event: { occasionKey: string | null }) => event.occasionKey === 'founding-day')).toBe(false)
@@ -167,7 +167,7 @@ describe('saudi occasion calendar', () => {
     syncSystemOccasions(platform)
     const estimated = platform.getSystemOccasion('ramadan')
     expect(estimated?.dateCertainty).toBe('estimated')
-    expect(estimated?.source).toContain('أم القرى')
+    expect(estimated?.source).toBe('umalqura')
     const confirmedDate = addDays(today, 20)
     const confirmed = await request(app).post('/api/internal/calendar/occasions').set('Authorization', 'Bearer cron-test').send({
       key: 'ramadan',

@@ -1,28 +1,28 @@
-const CANONICAL: { label: string, aliases: string[] }[] = [
-  { label: 'الرياض', aliases: ['الرياض', 'رياض', 'riyadh', 'ar riyadh', 'al riyadh'] },
-  { label: 'جدة', aliases: ['جدة', 'جده', 'jeddah', 'jedda', 'jidda', 'jidda'] },
-  { label: 'مكة المكرمة', aliases: ['مكة', 'مكه', 'مكة المكرمة', 'مكه المكرمه', 'makkah', 'mecca'] },
-  { label: 'المدينة المنورة', aliases: ['المدينة', 'المدينه', 'المدينة المنورة', 'المدينه المنوره', 'madinah', 'medina'] },
-  { label: 'الدمام', aliases: ['الدمام', 'dammam'] },
-  { label: 'الخبر', aliases: ['الخبر', 'khobar', 'al khobar', 'al khobar'] },
-  { label: 'الظهران', aliases: ['الظهران', 'dhahran'] },
-  { label: 'الأحساء', aliases: ['الأحساء', 'الاحساء', 'الهفوف', 'al ahsa', 'ahsa'] },
-  { label: 'القطيف', aliases: ['القطيف', 'qatif'] },
-  { label: 'بريدة', aliases: ['بريدة', 'بريده', 'buraydah', 'buraidah'] },
-  { label: 'عنيزة', aliases: ['عنيزة', 'عنيزه', 'unaizah'] },
-  { label: 'حائل', aliases: ['حائل', 'حايل', 'hail', 'ha\'il'] },
-  { label: 'تبوك', aliases: ['تبوك', 'tabuk'] },
-  { label: 'أبها', aliases: ['أبها', 'ابها', 'abha'] },
-  { label: 'خميس مشيط', aliases: ['خميس مشيط', 'khamis mushait'] },
-  { label: 'جازان', aliases: ['جازان', 'جيزان', 'jazan', 'jizan'] },
-  { label: 'نجران', aliases: ['نجران', 'najran'] },
-  { label: 'الباحة', aliases: ['الباحة', 'الباحه', 'al baha', 'albaha'] },
-  { label: 'سكاكا', aliases: ['سكاكا', 'sakaka'] },
-  { label: 'عرعر', aliases: ['عرعر', 'arar'] },
-  { label: 'ينبع', aliases: ['ينبع', 'yanbu'] },
-  { label: 'الطائف', aliases: ['الطائف', 'الطايف', 'taif', 'al taif'] },
-  { label: 'الجبيل', aliases: ['الجبيل', 'jubail'] },
-  { label: 'حفر الباطن', aliases: ['حفر الباطن', 'hafr al batin'] },
+const CANONICAL: { label: string, labelEn: string, aliases: string[] }[] = [
+  { label: 'الرياض', labelEn: 'Riyadh', aliases: ['الرياض', 'رياض', 'riyadh', 'ar riyadh', 'al riyadh'] },
+  { label: 'جدة', labelEn: 'Jeddah', aliases: ['جدة', 'جده', 'jeddah', 'jedda', 'jidda'] },
+  { label: 'مكة المكرمة', labelEn: 'Makkah', aliases: ['مكة', 'مكه', 'مكة المكرمة', 'مكه المكرمه', 'makkah', 'mecca'] },
+  { label: 'المدينة المنورة', labelEn: 'Madinah', aliases: ['المدينة', 'المدينه', 'المدينة المنورة', 'المدينه المنوره', 'madinah', 'medina'] },
+  { label: 'الدمام', labelEn: 'Dammam', aliases: ['الدمام', 'dammam'] },
+  { label: 'الخبر', labelEn: 'Khobar', aliases: ['الخبر', 'khobar', 'al khobar'] },
+  { label: 'الظهران', labelEn: 'Dhahran', aliases: ['الظهران', 'dhahran'] },
+  { label: 'الأحساء', labelEn: 'Al-Ahsa', aliases: ['الأحساء', 'الاحساء', 'الهفوف', 'al ahsa', 'ahsa'] },
+  { label: 'القطيف', labelEn: 'Qatif', aliases: ['القطيف', 'qatif'] },
+  { label: 'بريدة', labelEn: 'Buraydah', aliases: ['بريدة', 'بريده', 'buraydah', 'buraidah'] },
+  { label: 'عنيزة', labelEn: 'Unaizah', aliases: ['عنيزة', 'عنيزه', 'unaizah'] },
+  { label: 'حائل', labelEn: 'Hail', aliases: ['حائل', 'حايل', 'hail', 'ha\'il'] },
+  { label: 'تبوك', labelEn: 'Tabuk', aliases: ['تبوك', 'tabuk'] },
+  { label: 'أبها', labelEn: 'Abha', aliases: ['أبها', 'ابها', 'abha'] },
+  { label: 'خميس مشيط', labelEn: 'Khamis Mushait', aliases: ['خميس مشيط', 'khamis mushait'] },
+  { label: 'جازان', labelEn: 'Jazan', aliases: ['جازان', 'جيزان', 'jazan', 'jizan'] },
+  { label: 'نجران', labelEn: 'Najran', aliases: ['نجران', 'najran'] },
+  { label: 'الباحة', labelEn: 'Al-Baha', aliases: ['الباحة', 'الباحه', 'al baha', 'albaha'] },
+  { label: 'سكاكا', labelEn: 'Sakaka', aliases: ['سكاكا', 'sakaka'] },
+  { label: 'عرعر', labelEn: 'Arar', aliases: ['عرعر', 'arar'] },
+  { label: 'ينبع', labelEn: 'Yanbu', aliases: ['ينبع', 'yanbu'] },
+  { label: 'الطائف', labelEn: 'Taif', aliases: ['الطائف', 'الطايف', 'taif', 'al taif'] },
+  { label: 'الجبيل', labelEn: 'Jubail', aliases: ['الجبيل', 'jubail'] },
+  { label: 'حفر الباطن', labelEn: 'Hafr Al-Batin', aliases: ['حفر الباطن', 'hafr al batin'] },
 ]
 
 export const CITY_NAMES = CANONICAL.map((city) => city.label)
@@ -56,4 +56,10 @@ export function groupCity(raw: string | null | undefined) {
 export function storedCity(raw: string | null | undefined) {
   const city = groupCity(raw)
   return city.key ? city.label : ''
+}
+
+export function localizedCityName(label: string, locale: 'ar' | 'en') {
+  const found = CANONICAL.find((city) => city.label === label)
+  if (!found) return label
+  return locale === 'en' ? found.labelEn : found.label
 }

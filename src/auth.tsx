@@ -14,7 +14,7 @@ export type SessionUser = {
   name: string
   companyId: string
   companyName: string
-  role: 'admin' | 'member'
+  role: 'admin' | 'member' | 'provider'
 }
 
 export type RagStatus = {
@@ -35,6 +35,7 @@ type AuthContextValue = {
   loading: boolean
   login: (email: string, password: string) => Promise<string | null>
   register: (input: { companyName: string, email: string, password: string, confirm: string }) => Promise<string | null>
+  registerProvider: (input: { kind: 'shop' | 'individual', displayName: string, city: string, phone: string, services: string[], email: string, password: string, confirm: string }) => Promise<string | null>
   logout: () => Promise<void>
   refresh: () => Promise<void>
 }
@@ -74,7 +75,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       body: JSON.stringify({ email, password }),
     })
     const payload = await readJson(response)
-    if (!response.ok) return payload?.error || 'تعذر تسجيل الدخول.'
+    if (!response.ok) return payload?.code || payload?.error || 'LOGIN_FAILED'
     setUser(payload.user)
     if (payload.rag) setRag(payload.rag)
     return null
@@ -88,7 +89,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       body: JSON.stringify(input),
     })
     const payload = await readJson(response)
-    if (!response.ok) return payload?.error || 'تعذر إنشاء الحساب.'
+    if (!response.ok) return payload?.code || payload?.error || 'REGISTER_FAILED'
+    setUser(payload.user)
+    if (payload.rag) setRag(payload.rag)
+    return null
+  }, [])
+
+  const registerProvider = useCallback(async (input: { kind: 'shop' | 'individual', displayName: string, city: string, phone: string, services: string[], email: string, password: string, confirm: string }) => {
+    const response = await fetch('/api/register/provider', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    })
+    const payload = await readJson(response)
+    if (!response.ok) return payload?.code || payload?.error || 'REGISTER_FAILED'
     setUser(payload.user)
     if (payload.rag) setRag(payload.rag)
     return null
@@ -100,8 +115,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const value = useMemo(
-    () => ({ user, rag, loading, login, register, logout, refresh }),
-    [user, rag, loading, login, register, logout, refresh],
+    () => ({ user, rag, loading, login, register, registerProvider, logout, refresh }),
+    [user, rag, loading, login, register, registerProvider, logout, refresh],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

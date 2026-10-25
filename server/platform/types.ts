@@ -73,6 +73,8 @@ export type NotificationRecord = {
   designId: string | null
   title: string
   body: string
+  kind: string
+  payload: string
   readAt: string | null
   createdAt: string
 }

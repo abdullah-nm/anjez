@@ -1,11 +1,20 @@
 import { useEffect, useState, type DragEvent, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../auth'
+import { useI18n, type MessageKey } from '../i18n'
 import { fetchBrandLogoObjectUrl } from '../brandLogo'
 import { useStore } from '../store'
 import type { CompanyBrand, Tone } from '../types'
 
+const localNotices = new Set<string>(['localSaveFailed', 'saveBrandFailed', 'uploadLogoFailed', 'loadAccountFailed', 'ownerNameInvalid', 'companyNameInvalid', 'saveAccountFailed', 'nameSaved', 'brandSavedLocal', 'brandSavedServer', 'logoSaved'])
+
 const tones: Tone[] = ['فاخر', 'ودّي', 'رسمي', 'حيوي']
+const toneKey: Record<string, MessageKey> = {
+  'فاخر': 'toneLuxury',
+  'ودّي': 'toneFriendly',
+  'رسمي': 'toneFormal',
+  'حيوي': 'toneLively',
+}
 
 type ServerBrand = CompanyBrand & {
   description: string
@@ -16,6 +25,7 @@ type ServerBrand = CompanyBrand & {
 export function Brand() {
   const { brand, saveBrand } = useStore()
   const { user, refresh } = useAuth()
+  const { t, errorText } = useI18n()
   const [form, setForm] = useState<ServerBrand>({
     ...brand,
     description: '',
@@ -73,8 +83,8 @@ export function Brand() {
     setError(null)
     if (!user) {
       const ok = saveBrand(form)
-      if (ok) setMessage('تم حفظ الهوية على هذا الجهاز فقط. سجّل الدخول لحفظها للشركة.')
-      else setError('تعذر الحفظ المحلي.')
+      if (ok) setMessage('brandSavedLocal')
+      else setError('localSaveFailed')
       return
     }
     const response = await fetch('/api/brand', {
@@ -85,14 +95,14 @@ export function Brand() {
     })
     const payload = await response.json()
     if (!response.ok) {
-      setError(payload.error || 'تعذر حفظ الهوية على الخادم.')
+      setError(payload.code || 'saveBrandFailed')
       return
     }
     saveBrand({ ...form, logoUrl: form.logoPath ? `/api/brand/logo?t=${Date.now()}` : brand.logoUrl })
     if (payload.user) await refresh()
     document.documentElement.lang = form.language
     document.documentElement.dir = form.language === 'ar' ? 'rtl' : 'ltr'
-    setMessage('تم حفظ هوية الشركة على الخادم، وستُستخدم في توليد التصاميم.')
+    setMessage('brandSavedServer')
   }
 
   async function uploadLogo(file: File) {
@@ -105,7 +115,7 @@ export function Brand() {
     const response = await fetch('/api/brand/logo', { method: 'POST', credentials: 'include', body })
     const payload = await response.json()
     if (!response.ok) {
-      setError(payload.error || 'فشل رفع الشعار.')
+      setError(payload.code || 'uploadLogoFailed')
       return
     }
     const logoUrl = (await fetchBrandLogoObjectUrl()) || localUrl
@@ -124,7 +134,7 @@ export function Brand() {
       tone: (payload.brand.tone as Tone) || form.tone,
       logoUrl,
     })
-    setMessage('حُفظ الشعار كملف، وسيظهر في استوديو التصميم.')
+    setMessage('logoSaved')
   }
 
   async function deleteLogo() {
@@ -148,12 +158,12 @@ export function Brand() {
       {user && <AccountNames />}
     <form className="stack" onSubmit={onSubmit}>
       <div className="section-head">
-        <p className="eyebrow">هوية الشركة</p>
-        <h1>ملف الشركة وعدة الهوية للطباعة والتصميم</h1>
+        <p className="eyebrow">{t('brandEyebrow')}</p>
+        <h1>{t('brandTitle')}</h1>
       </div>
       {!user && (
         <p className="notice">
-          الحفظ الكامل للشركة يتطلب <Link to="/login">تسجيل الدخول</Link>.
+          {t('brandLogin')} <Link to="/login">{t('login')}</Link>
         </p>
       )}
 
@@ -167,24 +177,28 @@ export function Brand() {
           onDragLeave={() => setDragging(false)}
           onDrop={onDrop}
         >
-          <p>اسحب الشعار هنا أو اختر ملفاً (PNG / JPEG / WebP / SVG، حتى 2MB)</p>
-          <input
-            type="file"
-            accept="image/png,image/jpeg,image/webp,image/svg+xml"
-            onChange={(e) => {
-              const file = e.target.files?.[0]
-              if (file) void uploadLogo(file)
-            }}
-          />
+          <p>{t('dropLogo')}</p>
+          <label className="file-pick">
+            <input
+              className="file-native"
+              type="file"
+              accept="image/png,image/jpeg,image/webp,image/svg+xml"
+              onChange={(e) => {
+                const file = e.target.files?.[0]
+                if (file) void uploadLogo(file)
+              }}
+            />
+            <span className="btn btn-ghost">{t('chooseFile')}</span>
+          </label>
           <div className="logo-preview-wrap">
             {logoPreview || brand.logoUrl ? (
-              <img src={logoPreview || brand.logoUrl || ''} alt="شعار الشركة" className="logo-preview" />
+              <img src={logoPreview || brand.logoUrl || ''} alt={t('logoAlt')} className="logo-preview" />
             ) : (
-              <p className="muted">لا يوجد شعار محفوظ بعد.</p>
+              <p className="muted">{t('noLogo')}</p>
             )}
             {(logoPreview || brand.logoUrl) && (
               <button type="button" className="btn btn-ghost" onClick={() => void deleteLogo()}>
-                حذف الشعار
+                {t('deleteLogo')}
               </button>
             )}
           </div>
@@ -193,67 +207,67 @@ export function Brand() {
 
       <div className="grid-2">
         <label className="field">
-          <span>اسم الشركة</span>
+          <span>{t('companyName')}</span>
           <input required value={form.companyName} onChange={(e) => setForm({ ...form, companyName: e.target.value })} />
         </label>
         <label className="field">
-          <span>القطاع</span>
+          <span>{t('industry')}</span>
           <input value={form.industry} onChange={(e) => setForm({ ...form, industry: e.target.value })} />
         </label>
         <label className="field">
-          <span>جهة التواصل</span>
+          <span>{t('contactParty')}</span>
           <input required value={form.contactName} onChange={(e) => setForm({ ...form, contactName: e.target.value })} />
         </label>
         <label className="field">
-          <span>المدينة</span>
+          <span>{t('city')}</span>
           <input value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} />
         </label>
         <label className="field">
-          <span>البريد</span>
+          <span>{t('brandEmail')}</span>
           <input type="email" required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
         </label>
         <label className="field">
-          <span>الهاتف</span>
+          <span>{t('phone')}</span>
           <input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
         </label>
         <label className="field">
-          <span>اللون الأساسي</span>
+          <span>{t('primaryColor')}</span>
           <input type="color" value={form.primaryColor} onChange={(e) => setForm({ ...form, primaryColor: e.target.value })} />
         </label>
         <label className="field">
-          <span>لون الإبراز</span>
+          <span>{t('accentColor')}</span>
           <input type="color" value={form.accentColor} onChange={(e) => setForm({ ...form, accentColor: e.target.value })} />
         </label>
         <label className="field">
-          <span>لغة الواجهة والنصوص</span>
+          <span>{t('copyLanguage')}</span>
           <select value={form.language} onChange={(e) => setForm({ ...form, language: e.target.value as 'ar' | 'en' })}>
-            <option value="ar">العربية</option>
-            <option value="en">English</option>
+            <option value="ar">{t('arabic')}</option>
+            <option value="en">{t('english')}</option>
           </select>
         </label>
       </div>
 
       <label className="field">
-        <span>وصف الشركة</span>
+        <span>{t('companyDescription')}</span>
         <textarea rows={3} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
       </label>
       <label className="field">
-        <span>الشعار اللفظي</span>
+        <span>{t('slogan')}</span>
         <input value={form.slogan} onChange={(e) => setForm({ ...form, slogan: e.target.value })} />
       </label>
       <fieldset className="field">
-        <legend>نبرة النصوص</legend>
+        <legend>{t('toneLegend')}</legend>
         <div className="tone-row">
           {tones.map((tone) => (
             <label key={tone} className="tone">
               <input type="radio" name="tone" checked={form.tone === tone} onChange={() => setForm({ ...form, tone })} />
-              {tone}
+              {t(toneKey[tone])}
             </label>
           ))}
         </div>
       </fieldset>
       <div className="hero-actions">
-        <button type="submit" className="btn btn-primary">حفظ الهوية</button>
+        <button type="submit" className="btn btn-primary">{t('saveBrand')}</button>
         <button
           type="button"
           className="btn btn-ghost"
@@ -270,11 +284,11 @@ export function Brand() {
             logoPath: null,
           }))}
         >
-          مسح الحقول
+          {t('clearFields')}
         </button>
       </div>
-      {message && <p className="notice ok">{message}</p>}
-      {error && <p className="notice err">{error}</p>}
+      {message && <p className="notice ok">{localNotices.has(message) ? t(message as MessageKey) : message}</p>}
+      {error && <p className="notice err">{localNotices.has(error) ? t(error as MessageKey) : errorText(error, t('saveBrandFailed'))}</p>}
     </form>
     </div>
   )
@@ -282,6 +296,7 @@ export function Brand() {
 
 function AccountNames() {
   const { user, refresh } = useAuth()
+  const { t, errorText } = useI18n()
   const [companyName, setCompanyName] = useState(user?.companyName ?? '')
   const [name, setName] = useState(user?.name ?? '')
   const [baseline, setBaseline] = useState({ companyName: user?.companyName ?? '', name: user?.name ?? '' })
@@ -303,7 +318,7 @@ function AccountNames() {
         setCanEditCompany(Boolean(payload.canEditCompany))
       })
       .catch(() => {
-        if (!cancelled) setError('تعذر تحميل بيانات الحساب.')
+        if (!cancelled) setError('loadAccountFailed')
       })
     return () => { cancelled = true }
   }, [user?.id])
@@ -314,11 +329,11 @@ function AccountNames() {
     setMessage('')
     setError('')
     if (name.trim().length < 2 || name.trim().length > 80) {
-      setError('اسم صاحب الحساب بين حرفين وثمانين حرفًا.')
+      setError('ownerNameInvalid')
       return
     }
     if (canEditCompany && (companyName.trim().length < 2 || companyName.trim().length > 80)) {
-      setError('اسم الشركة بين حرفين وثمانين حرفًا.')
+      setError('companyNameInvalid')
       return
     }
     setSaving(true)
@@ -330,15 +345,15 @@ function AccountNames() {
         body: JSON.stringify(canEditCompany ? { name: name.trim(), companyName: companyName.trim() } : { name: name.trim() }),
       })
       const payload = await response.json().catch(() => ({}))
-      if (!response.ok) throw new Error(payload.error || 'تعذر حفظ بيانات الحساب.')
+      if (!response.ok) throw new Error(payload.code || 'saveAccountFailed')
       const next = { companyName: payload.user?.companyName || companyName, name: payload.user?.name || name }
       setCompanyName(next.companyName)
       setName(next.name)
       setBaseline(next)
       await refresh()
-      setMessage('حُفظ الاسم في الحساب، وسيظهر في الشريط والصفحات.')
+      setMessage('nameSaved')
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : 'تعذر حفظ بيانات الحساب.')
+      setError(saveError instanceof Error ? saveError.message : 'saveAccountFailed')
     } finally {
       setSaving(false)
     }
@@ -347,24 +362,24 @@ function AccountNames() {
   return (
     <form className="stack card" onSubmit={onSubmit}>
       <div className="section-head">
-        <h2>بيانات الحساب</h2>
-        <p className="muted">تعديل اسم الشركة واسم صاحب الحساب. لا يغيّر هذا النموذج الدور أو الصلاحيات.</p>
+        <h2>{t('accountTitle')}</h2>
+        <p className="muted">{t('accountHint')}</p>
       </div>
       <label className="field" htmlFor="account-company-name">
-        <span>اسم الشركة</span>
+        <span>{t('companyName')}</span>
         <input id="account-company-name" value={companyName} onChange={(event) => setCompanyName(event.target.value)} disabled={!canEditCompany || saving} required={canEditCompany} />
       </label>
-      {!canEditCompany && <p className="muted">اسم الشركة يظهر للجميع في الحساب، وتعديله متاح لحساب الشركة.</p>}
+      {!canEditCompany && <p className="muted">{t('companyNameLocked')}</p>}
       <label className="field" htmlFor="account-owner-name">
-        <span>اسم صاحب الحساب</span>
+        <span>{t('ownerName')}</span>
         <input id="account-owner-name" value={name} onChange={(event) => setName(event.target.value)} disabled={saving} required />
       </label>
       <div className="hero-actions">
-        <button type="submit" className="btn btn-primary" disabled={saving} aria-busy={saving}>{saving ? 'جارٍ الحفظ…' : 'حفظ'}</button>
-        <button type="button" className="btn btn-ghost" disabled={saving} onClick={() => { setCompanyName(baseline.companyName); setName(baseline.name); setMessage(''); setError('') }}>إلغاء</button>
+        <button type="submit" className="btn btn-primary" disabled={saving} aria-busy={saving}>{saving ? t('saving') : t('save')}</button>
+        <button type="button" className="btn btn-ghost" disabled={saving} onClick={() => { setCompanyName(baseline.companyName); setName(baseline.name); setMessage(''); setError('') }}>{t('cancel')}</button>
       </div>
-      {message && <p className="notice ok" role="status">{message}</p>}
-      {error && <p className="notice err" role="alert">{error}</p>}
+      {message && <p className="notice ok" role="status">{localNotices.has(message) ? t(message as MessageKey) : message}</p>}
+      {error && <p className="notice err" role="alert">{localNotices.has(error) ? t(error as MessageKey) : errorText(error, t('saveAccountFailed'))}</p>}
     </form>
   )
 }

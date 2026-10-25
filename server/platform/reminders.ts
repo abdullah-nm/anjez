@@ -12,7 +12,6 @@ export function dispatchDueReminders(platform: PlatformStore, now = new Date()) 
     for (const offset of event.reminderDays) {
       if (remaining !== offset) continue
       if (!platform.claimDelivery(event.companyId, event.id, offset, today)) continue
-      const estimate = event.dateCertainty === 'estimated' ? ' التاريخ تقديري ويلزم التحقق من الإعلان الرسمي.' : ''
       const recipients = platform.companyUserIds(event.companyId, event.createdBy)
       for (const userId of recipients) {
         platform.insertNotification({
@@ -21,8 +20,10 @@ export function dispatchDueReminders(platform: PlatformStore, now = new Date()) 
           userId,
           eventId: event.id,
           designId: null,
-          title: `تذكير: ${event.title}`,
-          body: `باقي ${offset} يوم على المناسبة (تقويم الرياض).${estimate}`,
+          title: event.title,
+          body: '',
+          kind: 'reminder',
+          payload: JSON.stringify({ title: event.title, offset, estimated: event.dateCertainty === 'estimated', occasionKey: event.occasionKey || '' }),
           readAt: null,
           createdAt: now.toISOString(),
         })
@@ -47,8 +48,10 @@ export function dispatchDueReminders(platform: PlatformStore, now = new Date()) 
             userId,
             eventId,
             designId: null,
-            title: `تذكير: ${occasion.titleAr}`,
-            body: `باقي ${offset} يوم على المناسبة (تقويم الرياض).`,
+            title: occasion.titleAr,
+            body: '',
+            kind: 'reminder',
+            payload: JSON.stringify({ title: occasion.titleAr, offset, estimated: false, occasionKey: occasion.key }),
             readAt: null,
             createdAt: now.toISOString(),
           })

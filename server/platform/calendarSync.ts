@@ -4,9 +4,9 @@ import { nextFixedDate, occasionByKey, occasionCatalog, riyadhYmd } from './occa
 import type { PlatformStore } from './store.ts'
 import type { DateCertainty, SystemOccasionRecord } from './types.ts'
 
-export const HIJRI_SOURCE = 'تقويم أم القرى (ICU islamic-umalqura)'
-export const FIXED_SOURCE = 'تاريخ ميلادي ثابت في المملكة'
-export const SEASON_SOURCE = 'لا يتوفر مصدر آلي رسمي. التحديث من سجل مسؤول النظام بعد الإعلان.'
+export const HIJRI_SOURCE = 'umalqura'
+export const FIXED_SOURCE = 'fixed-gregorian'
+export const SEASON_SOURCE = 'admin-after-announcement'
 const FIXED_NOTE = 'تاريخ ميلادي ثابت ويتكرر كل سنة.'
 const HIJRI_NOTE = 'تاريخ متوقع وفق تقويم أم القرى. تقديري إلى حين إعلان رؤية الهلال. يلزم التحقق من الإعلان الرسمي.'
 const SEASON_NOTE = 'بانتظار الإعلان الرسمي. لا يُعرض كتاريخ مؤكد ولا يُرسل له تذكير.'

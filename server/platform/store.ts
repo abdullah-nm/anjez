@@ -124,6 +124,7 @@ export class PlatformStore {
       CREATE INDEX IF NOT EXISTS idx_notes_user ON notifications(company_id, user_id, created_at);
     `)
     this.migrateEvents()
+    this.migrateNotes()
     this.migrateOrders()
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS reminder_deliveries (
@@ -171,8 +172,37 @@ export class PlatformStore {
 
   private migrateOrders() {
     const info = this.db.prepare('PRAGMA table_info(print_orders)').all() as { name: string }[]
-    if (!info.length || info.some((column) => column.name === 'delivery_city')) return
-    this.db.exec(`ALTER TABLE print_orders ADD COLUMN delivery_city TEXT NOT NULL DEFAULT ''`)
+    if (!info.length) return
+    const names = new Set(info.map((column) => column.name))
+    if (!names.has('delivery_city')) this.db.exec(`ALTER TABLE print_orders ADD COLUMN delivery_city TEXT NOT NULL DEFAULT ''`)
+    if (!names.has('provider_user_id')) this.db.exec(`ALTER TABLE print_orders ADD COLUMN provider_user_id TEXT`)
+    if (!names.has('service_key')) this.db.exec(`ALTER TABLE print_orders ADD COLUMN service_key TEXT NOT NULL DEFAULT 'print'`)
+    if (!names.has('status_note')) this.db.exec(`ALTER TABLE print_orders ADD COLUMN status_note TEXT NOT NULL DEFAULT ''`)
+    if (!names.has('updated_at')) this.db.exec(`ALTER TABLE print_orders ADD COLUMN updated_at TEXT`)
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS service_providers (
+        user_id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL,
+        display_name TEXT NOT NULL,
+        city TEXT NOT NULL,
+        phone TEXT NOT NULL,
+        services TEXT NOT NULL,
+        approval TEXT NOT NULL DEFAULT 'pending',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS order_events (
+        id TEXT PRIMARY KEY,
+        company_id TEXT NOT NULL,
+        order_id TEXT NOT NULL,
+        actor_id TEXT NOT NULL,
+        from_status TEXT,
+        to_status TEXT NOT NULL,
+        note TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_order_events_order ON order_events(company_id, order_id, created_at);
+    `)
   }
 
   private migrateReminders() {
@@ -374,10 +404,10 @@ export class PlatformStore {
     createdAt: string
   }) {
     requireCompany(input.companyId)
-    this.db.prepare(
+    const result = this.db.prepare(
       `INSERT OR IGNORE INTO print_orders (
-        company_id, id, user_id, user_name, product_id, status, quantity, delivery_date, delivery_city, design_id, created_at
-      ) VALUES (?, ?, ?, ?, ?, 'محفوظ', ?, ?, ?, ?, ?)`,
+        company_id, id, user_id, user_name, product_id, status, quantity, delivery_date, delivery_city, design_id, created_at, service_key, updated_at
+      ) VALUES (?, ?, ?, ?, ?, 'محفوظ', ?, ?, ?, ?, ?, 'print', ?)`,
     ).run(
       input.companyId,
       input.id,
@@ -389,13 +419,16 @@ export class PlatformStore {
       storedCity(input.deliveryCity),
       input.designId,
       input.createdAt,
+      input.createdAt,
     )
+    return result.changes > 0
   }
 
   listOrdersForAccount(companyId: string, userId: string) {
     requireCompany(companyId)
     return this.db.prepare(
-      `SELECT id, user_id, user_name, product_id, status, quantity, delivery_date, delivery_city, design_id, created_at
+      `SELECT id, user_id, user_name, product_id, status, quantity, delivery_date, delivery_city, design_id, created_at,
+              provider_user_id, service_key, status_note, updated_at
        FROM print_orders
        WHERE company_id = ? AND user_id = ?
        ORDER BY created_at DESC`,
@@ -410,7 +443,142 @@ export class PlatformStore {
       delivery_city: string
       design_id: string | null
       created_at: string
+      provider_user_id: string | null
+      service_key: string
+      status_note: string
+      updated_at: string | null
     }[]
+  }
+
+  saveProvider(input: {
+    userId: string
+    kind: 'shop' | 'individual'
+    displayName: string
+    city: string
+    phone: string
+    services: string[]
+    createdAt: string
+  }) {
+    this.db.prepare(
+      `INSERT INTO service_providers (user_id, kind, display_name, city, phone, services, approval, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
+    ).run(input.userId, input.kind, input.displayName, input.city, input.phone, JSON.stringify(input.services), input.createdAt, input.createdAt)
+  }
+
+  updateProviderProfile(input: {
+    userId: string
+    kind: 'shop' | 'individual'
+    displayName: string
+    city: string
+    phone: string
+    services: string[]
+    updatedAt: string
+  }) {
+    const result = this.db.prepare(
+      `UPDATE service_providers
+       SET kind = ?, display_name = ?, city = ?, phone = ?, services = ?, updated_at = ?
+       WHERE user_id = ?`,
+    ).run(input.kind, input.displayName, input.city, input.phone, JSON.stringify(input.services), input.updatedAt, input.userId)
+    return result.changes > 0
+  }
+
+  setProviderApproval(userId: string, approval: 'approved' | 'rejected', updatedAt: string) {
+    const result = this.db.prepare(
+      `UPDATE service_providers SET approval = ?, updated_at = ? WHERE user_id = ? AND approval != ?`,
+    ).run(approval, updatedAt, userId, approval)
+    return result.changes > 0 ? this.getProvider(userId) : this.getProvider(userId)
+  }
+
+  getProvider(userId: string) {
+    const row = this.db.prepare('SELECT * FROM service_providers WHERE user_id = ?').get(userId) as Record<string, unknown> | undefined
+    return row ? mapProvider(row) : null
+  }
+
+  listProviders() {
+    const rows = this.db.prepare('SELECT * FROM service_providers ORDER BY created_at DESC').all() as Record<string, unknown>[]
+    return rows.map(mapProvider)
+  }
+
+  getOrder(companyId: string, orderId: string) {
+    const row = this.db.prepare(
+      `SELECT company_id, id, user_id, user_name, product_id, status, quantity, delivery_date, delivery_city, design_id, created_at,
+              provider_user_id, service_key, status_note, updated_at
+       FROM print_orders WHERE company_id = ? AND id = ?`,
+    ).get(requireCompany(companyId), orderId) as Record<string, unknown> | undefined
+    return row ? mapOrder(row) : null
+  }
+
+  listAssignedOrders(providerUserId: string) {
+    const rows = this.db.prepare(
+      `SELECT company_id, id, user_id, user_name, product_id, status, quantity, delivery_date, delivery_city, design_id, created_at,
+              provider_user_id, service_key, status_note, updated_at
+       FROM print_orders WHERE provider_user_id = ? ORDER BY created_at DESC`,
+    ).all(providerUserId) as Record<string, unknown>[]
+    return rows.map(mapOrder)
+  }
+
+  listPlatformOrders() {
+    const rows = this.db.prepare(
+      `SELECT company_id, id, user_id, user_name, product_id, status, quantity, delivery_date, delivery_city, design_id, created_at,
+              provider_user_id, service_key, status_note, updated_at
+       FROM print_orders ORDER BY created_at DESC LIMIT 200`,
+    ).all() as Record<string, unknown>[]
+    return rows.map(mapOrder)
+  }
+
+  listOrderEvents(companyId: string, orderId: string) {
+    return this.db.prepare(
+      `SELECT id, actor_id, from_status, to_status, note, created_at
+       FROM order_events WHERE company_id = ? AND order_id = ? ORDER BY created_at ASC`,
+    ).all(requireCompany(companyId), orderId) as {
+      id: string
+      actor_id: string
+      from_status: string | null
+      to_status: string
+      note: string
+      created_at: string
+    }[]
+  }
+
+  applyOrderTransition(input: {
+    companyId: string
+    orderId: string
+    fromStatus: string
+    toStatus: string
+    providerUserId: string | null
+    note: string
+    actorId: string
+    at: string
+  }) {
+    this.db.exec('BEGIN IMMEDIATE')
+    try {
+      const result = this.db.prepare(
+        `UPDATE print_orders
+         SET status = ?, provider_user_id = ?, status_note = ?, updated_at = ?
+         WHERE company_id = ? AND id = ? AND status = ?`,
+      ).run(
+        input.toStatus,
+        input.providerUserId,
+        input.note,
+        input.at,
+        input.companyId,
+        input.orderId,
+        input.fromStatus,
+      )
+      if (!result.changes) {
+        this.db.exec('ROLLBACK')
+        return false
+      }
+      this.db.prepare(
+        `INSERT INTO order_events (id, company_id, order_id, actor_id, from_status, to_status, note, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(newId('evt'), input.companyId, input.orderId, input.actorId, input.fromStatus, input.toStatus, input.note, input.at)
+      this.db.exec('COMMIT')
+      return true
+    } catch (error) {
+      this.db.exec('ROLLBACK')
+      throw error
+    }
   }
 
   listPrintOrders(companyId: string, fromIso: string, toIso: string) {
@@ -517,11 +685,18 @@ export class PlatformStore {
     return this.getDesign(companyId, id)
   }
 
+  private migrateNotes() {
+    const info = this.db.prepare('PRAGMA table_info(notifications)').all() as { name: string }[]
+    if (!info.length) return
+    if (!info.some((column) => column.name === 'kind')) this.db.exec(`ALTER TABLE notifications ADD COLUMN kind TEXT NOT NULL DEFAULT ''`)
+    if (!info.some((column) => column.name === 'payload')) this.db.exec(`ALTER TABLE notifications ADD COLUMN payload TEXT NOT NULL DEFAULT ''`)
+  }
+
   insertNotification(note: NotificationRecord) {
     this.db.prepare(
-      `INSERT INTO notifications (id, company_id, user_id, event_id, design_id, title, body, read_at, created_at)
-       VALUES (?,?,?,?,?,?,?,?,?)`,
-    ).run(note.id, note.companyId, note.userId, note.eventId, note.designId, note.title, note.body, note.readAt, note.createdAt)
+      `INSERT INTO notifications (id, company_id, user_id, event_id, design_id, title, body, kind, payload, read_at, created_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+    ).run(note.id, note.companyId, note.userId, note.eventId, note.designId, note.title, note.body, note.kind, note.payload, note.readAt, note.createdAt)
   }
 
   listNotifications(companyId: string, userId: string) {
@@ -767,6 +942,48 @@ function mapSystemOccasion(row: Record<string, unknown>): SystemOccasionRecord {
   }
 }
 
+function mapProvider(row: Record<string, unknown>) {
+  let services: string[] = []
+  try {
+    const parsed = JSON.parse(String(row.services ?? '[]'))
+    if (Array.isArray(parsed)) services = parsed.filter((item) => typeof item === 'string')
+  } catch {
+    services = []
+  }
+  const approval = row.approval === 'approved' || row.approval === 'rejected' ? row.approval : 'pending'
+  return {
+    userId: String(row.user_id),
+    kind: row.kind === 'individual' ? 'individual' as const : 'shop' as const,
+    displayName: String(row.display_name),
+    city: String(row.city),
+    phone: String(row.phone),
+    services,
+    approval,
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at),
+  }
+}
+
+function mapOrder(row: Record<string, unknown>) {
+  return {
+    companyId: String(row.company_id),
+    id: String(row.id),
+    userId: String(row.user_id),
+    userName: String(row.user_name),
+    productId: String(row.product_id),
+    status: String(row.status),
+    quantity: Number(row.quantity),
+    deliveryDate: String(row.delivery_date),
+    deliveryCity: String(row.delivery_city ?? ''),
+    designId: row.design_id ? String(row.design_id) : null,
+    createdAt: String(row.created_at),
+    providerUserId: row.provider_user_id ? String(row.provider_user_id) : null,
+    serviceKey: String(row.service_key || 'print'),
+    statusNote: String(row.status_note ?? ''),
+    updatedAt: row.updated_at ? String(row.updated_at) : null,
+  }
+}
+
 function mapBrand(row: Record<string, unknown>): BrandProfile {
   return {
     companyId: String(row.company_id),
@@ -844,6 +1061,8 @@ function mapNote(row: Record<string, unknown>): NotificationRecord {
     designId: row.design_id ? String(row.design_id) : null,
     title: String(row.title),
     body: String(row.body),
+    kind: row.kind ? String(row.kind) : '',
+    payload: row.payload ? String(row.payload) : '',
     readAt: row.read_at ? String(row.read_at) : null,
     createdAt: String(row.created_at),
   }

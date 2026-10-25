@@ -418,6 +418,16 @@ export function registerPlatformRoutes(
           deliveryCity: order.delivery_city,
           status: order.status,
           designId: order.design_id,
+          providerName: order.provider_user_id ? deps.platform.getProvider(order.provider_user_id)?.displayName ?? '' : '',
+          statusNote: order.status_note,
+          updatedAt: order.updated_at,
+          events: deps.platform.listOrderEvents(user.companyId, order.id).map((event) => ({
+            id: event.id,
+            fromStatus: event.from_status,
+            toStatus: event.to_status,
+            note: event.note,
+            createdAt: event.created_at,
+          })),
         })),
       })
     } catch (error) {
@@ -439,7 +449,7 @@ export function registerPlatformRoutes(
       const linked = body.designId ? deps.platform.getDesign(user.companyId, body.designId) : null
       const designId = linked && (user.role === 'admin' || linked.createdBy === user.id) ? linked.id : null
       const createdAt = new Date().toISOString()
-      deps.platform.savePrintOrder({
+      const saved = deps.platform.savePrintOrder({
         companyId: user.companyId,
         id: body.id,
         userId: user.id,
@@ -451,6 +461,7 @@ export function registerPlatformRoutes(
         designId,
         createdAt,
       })
+      if (!saved) throw new AppError('هذا الطلب محفوظ بالفعل.', 409, 'ORDER_EXISTS')
       await deps.store.audit({
         actorUserId: user.id,
         companyId: user.companyId,
