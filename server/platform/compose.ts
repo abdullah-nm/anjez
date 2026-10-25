@@ -1,6 +1,8 @@
 import { newId } from '../lib/crypto.ts'
 import { AppError, MissingProviderError } from '../lib/errors.ts'
 import type { LlmProvider } from '../types.ts'
+import { alternateImageSize, alternateScenePrompt, generateAlternateBackground } from './alternateImage.ts'
+import { parseGeneratedLines, posterCopy } from './posterCopy.ts'
 import { GeminiImageClient, GeminiTextClient } from './gemini.ts'
 import { brandedSvg } from './svg.ts'
 import type { LocalObjectStorage } from './storage.ts'
@@ -38,6 +40,7 @@ export async function composeDesign(input: {
   llm: LlmProvider
   geminiText: Pick<GeminiTextClient, 'configured' | 'generateJson'>
   geminiImage: Pick<GeminiImageClient, 'configured' | 'generatePngDataUrl'>
+  alternateImage?: (prompt: string, size: { width: number; height: number }) => Promise<string>
   payload: {
     eventId: string | null
     eventTitle: string
@@ -57,6 +60,7 @@ export async function composeDesign(input: {
   const logo = input.storage.readCompanyLogo(input.companyId, input.brand.logoPath, input.brand.logoMime)
   const logoHref = logo.ok ? logo.dataUrl : null
   let backgroundHref: string | null = null
+  let backgroundOpacity = 0.55
   let backgroundKind: DesignRecord['backgroundKind'] = 'branded_svg'
   let backgroundNote =
     'قالب SVG قابل للتحرير يضم شعار الشركة وألوان الهوية. هذا ليس صورة نقطية مولَّدة بالذكاء الاصطناعي.'
@@ -86,10 +90,30 @@ export async function composeDesign(input: {
         : 'الشعار SVG لم يُرسل إلى Gemini كصورة نقطية. الخلفية من الألوان فقط، والملف الأصلي مُدرج في القالب.'
     } catch (error) {
       if (!(error instanceof MissingProviderError) && !(error instanceof AppError)) throw error
-      backgroundHref = null
-      backgroundKind = 'branded_svg'
       const reason = error instanceof AppError ? error.message : 'رفض Gemini توليد الصورة.'
-      backgroundNote = `تعذر توليد الخلفية النقطية: ${reason} أُنشئ قالب SVG${logoHref ? ' مع الشعار الأصلي' : ' بدون شعار'}.`
+      try {
+        const alternate = input.alternateImage ?? generateAlternateBackground
+        const scenePrompt = alternateScenePrompt({
+          headline: copy.headline,
+          eventTitle: input.payload.eventTitle,
+          purpose: input.payload.purpose,
+          instructions: input.payload.instructions,
+          productName: input.payload.productName,
+          primaryColor: input.brand.primaryColor,
+          accentColor: input.brand.accentColor,
+          tone: input.payload.style || input.brand.tone,
+        })
+        backgroundHref = await alternate(scenePrompt, alternateImageSize(input.payload.dimensions, input.payload.size))
+        backgroundOpacity = 1
+        backgroundKind = 'ai_bitmap_background'
+        backgroundNote =
+          'تعذر Gemini، فاستُخدمت خلفية من مزود بديل. الشعار النهائي هو الملف الأصلي للشركة، وليس رسماً من النموذج.'
+      } catch (alternateError) {
+        backgroundHref = null
+        backgroundKind = 'branded_svg'
+        const alternateReason = alternateError instanceof AppError ? alternateError.message : 'تعذر المزوّد البديل.'
+        backgroundNote = `تعذر توليد الخلفية النقطية: ${reason} ${alternateReason} أُنشئ قالب SVG${logoHref ? ' مع الشعار الأصلي' : ' بدون شعار'}.`
+      }
     }
   }
 
@@ -103,6 +127,7 @@ export async function composeDesign(input: {
     size: input.payload.size,
     logoHref,
     backgroundHref,
+    backgroundOpacity,
   })
 
   const now = new Date().toISOString()
@@ -132,10 +157,41 @@ export async function composeDesign(input: {
   return design
 }
 
+function copyPrompt(input: Parameters<typeof composeDesign>[0]) {
+  const language = input.payload.language === 'en' ? 'English' : 'العربية'
+  return [
+    'اكتب نص ملصق مطبوع فقط. أرجع JSON صالحاً بلا شرح:',
+    '{"headline":"سطر قصير","subhead":"سطر ثانٍ قصير"}',
+    `الشركة: ${input.brand.companyName}. المناسبة: ${input.payload.eventTitle || 'عامة'}.`,
+    `وصف المستخدم للنص: ${input.payload.instructions.trim() || 'تهنئة قصيرة تليق بالمناسبة'}.`,
+    `الجمهور: ${input.payload.audience.trim() || 'عام'}. النبرة: ${input.payload.style || input.brand.tone}. اللغة: ${language}.`,
+    'العنوان من كلمتين إلى أربع كلمات حتى يظهر كبيراً في سطر واحد. السطر الثاني جملة أقصر من العنوان.',
+    'لا تضف تاريخاً ولا سعراً ولا هاشتاق، ولا تكرر اسم الشركة في السطرين.',
+  ].join('\n')
+}
+
 async function writeCopy(input: Parameters<typeof composeDesign>[0]) {
-  return {
-    headline: input.payload.content.trim() || input.payload.eventTitle.trim(),
+  const brief = input.payload.instructions.trim()
+  const eventTitle = input.payload.eventTitle.trim()
+  if (input.geminiText.configured() && (brief || eventTitle)) {
+    try {
+      const generated = parseGeneratedLines(await input.geminiText.generateJson(copyPrompt(input)))
+      if (generated) {
+        return { headline: generated.headline, subhead: generated.subhead, body: input.payload.audience.trim() }
+      }
+    } catch (error) {
+      if (!(error instanceof MissingProviderError) && !(error instanceof AppError)) throw error
+    }
+  }
+  const lines = posterCopy({
+    headline: input.payload.content.trim() || eventTitle,
     subhead: input.payload.purpose.trim(),
+    eventTitle,
+    companyName: input.brand.companyName,
+  })
+  return {
+    headline: lines.headline,
+    subhead: lines.subhead,
     body: input.payload.audience.trim(),
   }
 }

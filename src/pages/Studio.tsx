@@ -55,6 +55,9 @@ function plainFailure(message: string) {
 }
 
 function previewSourceNote(kind: string, note: string) {
+  if (kind === 'ai_bitmap_background' && note.includes('مزود بديل')) {
+    return 'الخلفية من مزود بديل بعد تعذر Gemini. الشعار من ملف الهوية. أعد التوليد بعد 45 ثانية إن احتجت صورة أخرى.'
+  }
   if (kind === 'ai_bitmap_background' && !note.includes('تعذر')) {
     return 'الخلفية من Gemini. الشعار من ملف الهوية، وليس رسماً من النموذج.'
   }
@@ -106,10 +109,11 @@ export function Studio() {
   const textDir = language === 'en' ? 'ltr' : 'rtl'
 
   useEffect(() => {
-    const step = phase === 'review' ? '3' : headline ? '2' : '1'
+    const ready = Boolean(note.trim() || selected)
+    const step = phase === 'review' ? '3' : ready ? '2' : '1'
     sessionStorage.setItem('anjz-step', step)
     window.dispatchEvent(new Event('anjz-step'))
-  }, [phase, headline])
+  }, [phase, note, selected])
 
   useEffect(() => {
     const eventId = params.get('eventId')
@@ -135,7 +139,7 @@ export function Studio() {
       appliedOccasion.current = eventId
       if (carried?.eventId === eventId) {
         setAudience(carried.audience)
-        setNote(carried.imageNote)
+        setNote(carried.textBrief)
         setShowHelpful(true)
       }
       return
@@ -146,13 +150,13 @@ export function Studio() {
       eventId: next.eventId,
       eventTitle: next.eventTitle,
       size: product.sizes[0],
-      headline: next.headline,
-      subhead: next.subhead,
+      headline: '',
+      subhead: '',
       body: next.body,
     })
     setAudience(next.audience)
-    setNote(next.imageNote)
-    setShowHelpful(true)
+    setNote(next.textBrief)
+    setShowHelpful(false)
     appliedOccasion.current = eventId
   }, [params, occasions, eventsStatus, location.state, brand.companyName, brand.slogan])
 
@@ -169,7 +173,7 @@ export function Studio() {
           productName: product.name,
           headline,
           subhead: draft.subhead.trim(),
-          body: [audience.trim(), note.trim()].filter(Boolean).join(' · '),
+          body: audience.trim(),
           dimensions: dimensionsFor(product.kind),
           size: draft.size,
         }),
@@ -253,13 +257,13 @@ export function Studio() {
       eventId: next.eventId,
       eventTitle: next.eventTitle,
       size: product.sizes[0],
-      headline: next.headline,
-      subhead: next.subhead,
+      headline: '',
+      subhead: '',
       body: next.body,
     })
     setAudience(next.audience)
-    setNote(next.imageNote)
-    setShowHelpful(true)
+    setNote(next.textBrief)
+    setShowHelpful(false)
     appliedOccasion.current = event.id
   }
 
@@ -277,14 +281,14 @@ export function Studio() {
           eventTitle: selected?.title || '',
           productId: product.id,
           productName: product.name,
-          purpose: draft.subhead.trim(),
+          purpose: '',
           audience: audience.trim(),
           language,
           style: tone,
           dimensions: dimensionsFor(product.kind),
           size: draft.size,
-          instructions: note,
-          content: headline,
+          instructions: note.trim() || (selected ? `تهنئة قصيرة تليق بـ${selected.title}` : ''),
+          content: '',
         }),
       })
       const payload = await response.json()
@@ -484,15 +488,16 @@ export function Studio() {
             )}
 
             <label className="field">
-              <span>النص على التصميم</span>
+              <span>وصف النص</span>
               <textarea
                 ref={textRef}
                 rows={3}
                 dir={textDir}
-                value={draft.headline}
-                onChange={(e) => setDraft({ ...draft, headline: e.target.value })}
-                placeholder="النص الذي يظهر على التصميم"
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                placeholder="صف العبارة، مثل: تهنئة رمضانية قصيرة ودافئة للموظفين"
               />
+              <p className="muted">لا تكتب العبارة النهائية. يولَّد النص من هذا الوصف ويظهر فوق التصميم.</p>
             </label>
 
             <button type="button" className="text-link advanced-toggle" onClick={() => setShowHelpful((open) => !open)}>
@@ -560,7 +565,7 @@ export function Studio() {
               <button
                 type="button"
                 className="btn btn-primary"
-                disabled={loading || generating || !headline}
+                disabled={loading || generating || (!note.trim() && !selected)}
                 onClick={() => void generateArtwork()}
               >
                 {generating ? 'جارٍ تجهيز المعاينة…' : 'ولّد المعاينة'}

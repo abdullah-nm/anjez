@@ -18,6 +18,7 @@ export type OccasionPrefill = {
   body: string
   audience: string
   imageNote: string
+  textBrief: string
 }
 
 export function suggestedProductId(category: string | null | undefined) {
@@ -41,6 +42,7 @@ export function prefillFromOccasion(source: OccasionSource): OccasionPrefill {
     subhead: slogan || company,
     body: audience || `رسالة من ${company}`,
     audience,
+    textBrief: `تهنئة قصيرة تليق بـ${title}`,
     imageNote: officialDate
       ? `خلفية بصرية لـ«${title}» بهوية ${company}. الموعد المعروف ${officialDate} يُستخدم فقط إذا بقي في النص الظاهر. لا تضف تاريخًا آخر.`
       : `خلفية بصرية لـ«${title}» بهوية ${company}. لا تكتب تاريخًا أو تفاصيل رسمية غير الموجودة في النص الظاهر.`,

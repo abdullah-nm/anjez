@@ -8,7 +8,7 @@ const tajawalRegular = readFileSync(join(fontDir, 'Tajawal-400.ttf')).toString('
 const tajawalBold = readFileSync(join(fontDir, 'Tajawal-700.ttf')).toString('base64')
 
 const NEUTRAL = '#1e3a5f'
-const FONT = "Tajawal, 'IBM Plex Sans Arabic', sans-serif"
+const FONT = 'Tajawal'
 
 export function xmlEscape(value: string) {
   return value
@@ -110,7 +110,7 @@ function isArabic(value: string) {
 
 function wrapLines(value: string, maxWidth: number, size: number) {
   const arabic = isArabic(value)
-  const factor = arabic ? 0.62 : 0.56
+  const factor = arabic ? 0.78 : 0.58
   const maxChars = Math.max(4, Math.floor(maxWidth / (size * factor)))
   const words = value.trim().split(/\s+/).filter(Boolean)
   if (!words.length) return []
@@ -123,15 +123,7 @@ function wrapLines(value: string, maxWidth: number, size: number) {
       current = word
     } else current = next
   }
-  for (const word of words) {
-    if (word.length > maxChars) {
-      if (current) {
-        rows.push(current)
-        current = ''
-      }
-      for (let index = 0; index < word.length; index += maxChars) push(word.slice(index, index + maxChars))
-    } else push(word)
-  }
+    for (const word of words) push(word)
   if (current) rows.push(current)
   return rows
 }
@@ -143,6 +135,19 @@ function svgId(value: string) {
     hash = Math.imul(hash, 16777619)
   }
   return (hash >>> 0).toString(36)
+}
+
+function balanceLines(lines: string[]) {
+  if (lines.length < 2) return lines
+  const next = [...lines]
+  const last = next[next.length - 1].split(/\s+/).filter(Boolean)
+  const prev = next[next.length - 2].split(/\s+/).filter(Boolean)
+  if (last.length === 1 && prev.length >= 2) {
+    const moved = prev.pop()
+    next[next.length - 2] = prev.join(' ')
+    next[next.length - 1] = `${moved} ${last[0]}`
+  }
+  return next
 }
 
 function fitSize(value: string, maxWidth: number, start: number, min: number, maxLines: number) {
@@ -161,6 +166,7 @@ export function brandedSvg(input: {
   size?: string
   logoHref: string | null
   backgroundHref?: string | null
+  backgroundOpacity?: number
 }) {
   const { width, height } = aspectBox(input.dimensions, input.size || '')
   const margin = Math.round(Math.min(width, height) * 0.06)
@@ -184,67 +190,73 @@ export function brandedSvg(input: {
   const card = logoSide + cardPad * 2
   const cardX = width - margin - card
   const cardY = margin
-  const textRight = landscape ? cardX - margin : width - margin
-  const textLeft = margin
-  const textWidth = Math.max(80, textRight - textLeft)
-  const contentTop = landscape ? margin + Math.round(height * 0.06) : cardY + card + Math.round(margin * 0.7)
-  const contentBottom = height - footerH - Math.round(margin * 0.45)
-  const maxHeadlineLines = landscape ? 2 : 3
+  const textWidth = Math.round(width * (landscape ? 0.72 : 0.78))
+  const textX = Math.round(width / 2)
+  const contentTop = cardY + card + margin
+  const contentBottom = height - footerH - margin
+  const maxHeadlineLines = 2
 
-  let pillSize = product ? fitSize(product, textWidth * 0.72, landscape ? 22 : 26, 14, 1) : 0
-  let pillText = product ? wrapLines(product, textWidth * 0.72, pillSize)[0] || '' : ''
-  const headlineFloor = landscape ? 26 : 30
-  let headlineSize = fitSize(headline, textWidth, landscape ? Math.round(Math.min(width, height) * 0.1) : Math.round(Math.min(width, height) * 0.09), headlineFloor, maxHeadlineLines)
-  const headlineLinesAtSize = headline ? wrapLines(headline, textWidth, headlineSize).length : 1
-  if (headlineLinesAtSize > 1) {
-    const factor = headlineLinesAtSize >= 3 ? 0.62 : 0.78
-    headlineSize = fitSize(headline, textWidth, Math.max(headlineFloor, Math.round(headlineSize * factor)), headlineFloor, maxHeadlineLines)
+  let headlineSize = Math.min(92, Math.round(Math.min(width, height) * (landscape ? 0.11 : 0.078)))
+  let subSize = Math.max(22, Math.round(headlineSize * 0.46))
+  const pack = () => ({
+    headlineLines: headline ? balanceLines(wrapLines(headline, textWidth, headlineSize)) : [],
+    subLines: subtitle ? balanceLines(wrapLines(subtitle, textWidth, subSize)) : [],
+  })
+  const widerThan = (lines: string[], size: number) => lines.some((line) => (
+    line.length * size * (isArabic(line) ? 0.78 : 0.58) > textWidth
+  ))
+  let packed = pack()
+  while (
+    (packed.headlineLines.length > maxHeadlineLines || packed.subLines.length > 2 || widerThan(packed.headlineLines, headlineSize) || widerThan(packed.subLines, subSize))
+    && (headlineSize > 28 || subSize > 18)
+  ) {
+    if (packed.headlineLines.length > maxHeadlineLines && headlineSize > 28) headlineSize -= 2
+    else if (subSize > 18) subSize -= 1
+    else headlineSize -= 2
+    subSize = Math.max(18, Math.min(subSize, Math.round(headlineSize * 0.46)))
+    packed = pack()
   }
-  let subSize = fitSize(subtitle, textWidth, Math.round(headlineSize * 0.42), 16, 2)
+  const headlineLines = packed.headlineLines
+  const subLines = packed.subLines.length ? packed.subLines : wrapLines(subtitle, textWidth, subSize)
+  const lineGap = 1.38
+  const headBlock = headlineLines.length * headlineSize * lineGap
+  const subBlock = subLines.length * subSize * lineGap
+  const blockGap = Math.round(headlineSize * 0.55)
+  const blockHeight = headBlock + (subLines.length ? blockGap + subBlock : 0)
+  const room = Math.max(headlineSize, contentBottom - contentTop)
+  const centered = contentTop + (room - blockHeight) / 2 - room * 0.04
+  const blockTop = Math.round(Math.max(contentTop, Math.min(centered, contentBottom - blockHeight)))
+  const headlineY = Math.round(blockTop + headlineSize)
+  const subY = Math.round(blockTop + headBlock + blockGap + subSize)
+  const plateTop = Math.round(blockTop - headlineSize * 0.35)
+  const plateBottom = Math.round(subY + Math.max(0, subLines.length - 1) * subSize * lineGap + subSize * 0.45)
+  const plateX = Math.round((width - textWidth) / 2 - 36)
+  const plateWidth = textWidth + 72
 
-  const measure = () => {
-    const pillHeight = pillText ? Math.round(pillSize * 1.85) : 0
-    const headlineLines = headline ? wrapLines(headline, textWidth, headlineSize).slice(0, maxHeadlineLines) : []
-    const subLines = wrapLines(subtitle, textWidth, subSize).slice(0, 2)
-    const headlineY = Math.round(contentTop + pillHeight + headlineSize * 1.2)
-    const subY = Math.round(headlineY + headlineLines.length * headlineSize * 1.28 + subSize * 0.4)
-    const dividerY = Math.round(subY + subLines.length * subSize * 1.35 + margin * 0.25)
-    return { pillHeight, headlineLines, subLines, headlineY, subY, dividerY }
-  }
-
-  let layout = measure()
-  while (layout.dividerY > contentBottom && (headlineSize > 26 || subSize > 16 || pillSize > 14)) {
-    if (headlineSize > 26) headlineSize -= 2
-    else if (subSize > 16) subSize -= 1
-    else pillSize -= 1
-    if (product) pillText = wrapLines(product, textWidth * 0.72, pillSize)[0] || ''
-    layout = measure()
-  }
-
-  const { pillHeight, headlineLines, subLines, headlineY, subY, dividerY } = layout
+  let pillSize = product ? fitSize(product, Math.round(width * 0.34), 22, 14, 1) : 0
+  let pillText = product ? wrapLines(product, Math.round(width * 0.34), pillSize)[0] || '' : ''
   const pillWidth = pillText
-    ? Math.min(textWidth, Math.round(pillText.length * pillSize * (isArabic(pillText) ? 0.7 : 0.6) + pillSize * 1.8))
+    ? Math.min(Math.round(width * 0.34), Math.round(pillText.length * pillSize * (isArabic(pillText) ? 0.72 : 0.58) + pillSize * 1.8))
     : 0
-  const pillX = textRight - pillWidth
-  const pillY = contentTop
+  const pillX = margin
+  const pillY = margin
+  const pillHeight = pillText ? Math.round(pillSize * 1.85) : 0
 
-  const text = (lines: string[], y: number, size: number, fill: string, weight: string) => {
-    if (!lines.length) return ''
-    const arabic = isArabic(lines[0])
-    const x = arabic ? textRight : textLeft
-    const tspans = lines.map((row, index) => (
-      `<tspan x="${x}" dy="${index === 0 ? 0 : Math.round(size * 1.28)}">${xmlEscape(row)}</tspan>`
-    )).join('')
-    return `<text x="${x}" y="${y}" text-anchor="start" direction="${arabic ? 'rtl' : 'ltr'}" unicode-bidi="embed" fill="${fill}" font-size="${size}" font-weight="${weight}" font-family="${FONT}">${tspans}</text>`
-  }
+  const text = (lines: string[], y: number, size: number, fill: string, weight: string) => lines.map((row, index) => {
+    const arabic = isArabic(row)
+    const lineY = y + index * Math.round(size * lineGap)
+    return `<text x="${textX}" y="${lineY}" text-anchor="middle" direction="${arabic ? 'rtl' : 'ltr'}" unicode-bidi="isolate" xml:lang="${arabic ? 'ar' : 'en'}" fill="${fill}" font-size="${size}" font-weight="${weight}" font-family="${FONT}">${xmlEscape(row)}</text>`
+  }).join('')
 
   const logoInner = input.logoHref
     ? `<image href="${xmlEscape(input.logoHref)}" xlink:href="${xmlEscape(input.logoHref)}" x="${cardX + cardPad}" y="${cardY + cardPad}" width="${logoSide}" height="${logoSide}" preserveAspectRatio="xMidYMid meet"/>`
     : `<text x="${cardX + card / 2}" y="${cardY + card / 2 + Math.round(logoSide * 0.16)}" text-anchor="middle" fill="${xmlEscape(primary)}" font-size="${Math.round(logoSide * 0.42)}" font-weight="700" font-family="${FONT}">${xmlEscape(company.slice(0, 1) || '•')}</text>`
 
+  const backgroundOpacity = input.backgroundOpacity ?? 0.55
   const artwork = input.backgroundHref
-    ? `<image href="${xmlEscape(input.backgroundHref)}" x="0" y="0" width="${width}" height="${height}" preserveAspectRatio="xMidYMid slice" opacity="0.55"/>`
+    ? `<image href="${xmlEscape(input.backgroundHref)}" x="0" y="0" width="${width}" height="${height}" preserveAspectRatio="xMidYMid slice" opacity="${backgroundOpacity}"/>`
     : ''
+  const photo = Boolean(input.backgroundHref) && backgroundOpacity >= 0.75
 
   const companyArabic = isArabic(company)
   const companyX = companyArabic ? width - margin : margin
@@ -275,16 +287,16 @@ export function brandedSvg(input: {
   <g clip-path="url(#frame${uid})">
     <rect width="${width}" height="${height}" fill="url(#bg${uid})"/>
     ${artwork}
-    <rect width="${width}" height="${height}" fill="url(#geo${uid})" opacity="0.08"/>
-    <circle cx="${margin}" cy="${height - footerH - margin}" r="${Math.round(Math.min(width, height) * 0.34)}" fill="${xmlEscape(accent)}" opacity="0.18"/>
-    <circle cx="${Math.round(width * 0.18)}" cy="${Math.round(height * 0.78)}" r="${Math.round(Math.min(width, height) * 0.16)}" fill="${xmlEscape(accent)}" opacity="0.12"/>
+    <rect width="${width}" height="${height}" fill="url(#geo${uid})" opacity="${photo ? '0' : '0.08'}"/>
+    <circle cx="${margin}" cy="${height - footerH - margin}" r="${Math.round(Math.min(width, height) * 0.34)}" fill="${xmlEscape(accent)}" opacity="${photo ? '0' : '0.18'}"/>
+    <circle cx="${Math.round(width * 0.18)}" cy="${Math.round(height * 0.78)}" r="${Math.round(Math.min(width, height) * 0.16)}" fill="${xmlEscape(accent)}" opacity="${photo ? '0' : '0.12'}"/>
     <rect x="${cardX}" y="${cardY}" width="${card}" height="${card}" rx="${Math.round(card * 0.16)}" fill="#ffffff" filter="url(#logoShadow${uid})"/>
     ${logoInner}
     ${pillText ? `<rect x="${pillX}" y="${pillY}" width="${pillWidth}" height="${pillHeight}" rx="${pillHeight / 2}" fill="${xmlEscape(accent)}" opacity="0.94"/>
     <text x="${pillX + pillWidth / 2}" y="${Math.round(pillY + pillHeight * 0.68)}" text-anchor="middle" fill="${inkFor(accent)}" font-size="${pillSize}" font-weight="700" font-family="${FONT}">${xmlEscape(pillText)}</text>` : ''}
-    ${text(headlineLines, headlineY, headlineSize, ink, '700')}
-    ${text(subLines, subY, subSize, muted, '400')}
-    <line x1="${textLeft}" y1="${dividerY}" x2="${textRight}" y2="${dividerY}" stroke="${xmlEscape(accent)}" stroke-width="3"/>
+    ${photo && (headlineLines.length || subLines.length) ? `<rect x="${Math.max(margin, plateX)}" y="${Math.max(margin, plateTop)}" width="${Math.min(width - margin * 2, plateWidth)}" height="${Math.max(headlineSize, plateBottom - plateTop)}" rx="32" fill="#07140f" opacity="0.58"/>` : ''}
+    ${text(headlineLines, headlineY, headlineSize, photo ? '#ffffff' : ink, '700')}
+    ${text(subLines, subY, subSize, photo ? 'rgba(255,255,255,0.92)' : muted, '400')}
     <rect x="0" y="${height - footerH}" width="${width}" height="${footerH}" fill="${xmlEscape(footerFill)}"/>
     <text x="${companyX}" y="${height - footerH / 2 + 6}" text-anchor="start" direction="${companyArabic ? 'rtl' : 'ltr'}" fill="${footerInk}" font-size="${footerSize}" font-weight="700" font-family="${FONT}">${xmlEscape(company)}</text>
     ${sizeLabel ? `<text x="${sizeX}" y="${height - footerH / 2 + 6}" text-anchor="${sizeAnchor}" direction="rtl" fill="${footerInk}" font-size="${Math.max(13, Math.round(footerSize * 0.86))}" font-family="${FONT}">${xmlEscape(`المقاس: ${sizeLabel}`)}</text>` : ''}

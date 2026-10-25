@@ -126,6 +126,78 @@ describe('design compose uses the session company logo', () => {
     expect(design.svg).not.toContain('data:image/png;base64,')
   })
 
+  it('puts model-written lines on the poster instead of the description', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'anjz-logo-'))
+    const storage = new LocalObjectStorage(join(dir, 'up'))
+    const platform = new PlatformStore(join(dir, 'p.sqlite'))
+    cleanups.push(() => platform.close())
+    const saved = storage.saveLogo('company_almarai', 'image/png', PNG)
+    const design = await composeDesign({
+      platform,
+      storage,
+      brand: brand('company_almarai', saved.path, saved.mime),
+      userId: 'user_almarai_admin',
+      companyId: 'company_almarai',
+      llm: new ScriptedLlm(),
+      geminiText: {
+        configured: () => true,
+        generateJson: async () => '{"headline":"رمضان كريم","subhead":"كل عام وأنتم بخير"}',
+      },
+      geminiImage: {
+        configured: () => true,
+        generatePngDataUrl: async () => {
+          throw new MissingProviderError('IMAGE_GENERATION_UNAVAILABLE', 'رفض Gemini الصورة.')
+        },
+      },
+      alternateImage: async () => {
+        throw new MissingProviderError('IMAGE_GENERATION_UNAVAILABLE', 'تعذر المزوّد البديل.')
+      },
+      payload: { ...payload(), eventTitle: 'رمضان', instructions: 'تهنئة رمضانية قصيرة للموظفين', content: '' },
+    })
+    expect(design.headline).toBe('رمضان كريم')
+    expect(design.subhead).toBe('كل عام وأنتم بخير')
+    expect(design.svg).toContain('رمضان كريم')
+    expect(design.svg).not.toContain('تهنئة رمضانية قصيرة')
+  })
+
+  it('uses an alternate background when Gemini rejects the image and keeps the original logo', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'anjz-logo-'))
+    const storage = new LocalObjectStorage(join(dir, 'up'))
+    const platform = new PlatformStore(join(dir, 'p.sqlite'))
+    cleanups.push(() => platform.close())
+    const saved = storage.saveLogo('company_almarai', 'image/png', PNG)
+    const seen: string[] = []
+    const design = await composeDesign({
+      platform,
+      storage,
+      brand: brand('company_almarai', saved.path, saved.mime),
+      userId: 'user_almarai_admin',
+      companyId: 'company_almarai',
+      llm: new ScriptedLlm(),
+      geminiText: { configured: () => false, generateJson: async () => '' },
+      geminiImage: {
+        configured: () => true,
+        generatePngDataUrl: async () => {
+          throw new MissingProviderError('IMAGE_GENERATION_UNAVAILABLE', 'فشل Gemini (429). quota')
+        },
+      },
+      alternateImage: async (prompt) => {
+        seen.push(prompt)
+        return 'data:image/jpeg;base64,QUxU'
+      },
+      payload: payload(),
+    })
+    expect(seen).toHaveLength(1)
+    expect(seen[0]).toMatch(/National Day|palm/)
+    expect(seen[0]).not.toMatch(/abstract print background/)
+    expect(seen[0]).not.toContain(PNG.toString('base64'))
+    expect(design.backgroundKind).toBe('ai_bitmap_background')
+    expect(design.backgroundNote).toContain('مزود بديل')
+    expect(design.backgroundNote).not.toMatch(/نجاح|openai/i)
+    expect(design.svg).toContain('data:image/jpeg;base64,QUxU')
+    expect(design.svg).toContain(PNG.toString('base64'))
+  })
+
   it('keeps the original logo in SVG when Gemini rejects the image', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'anjz-logo-'))
     const storage = new LocalObjectStorage(join(dir, 'up'))
@@ -145,6 +217,9 @@ describe('design compose uses the session company logo', () => {
         generatePngDataUrl: async () => {
           throw new MissingProviderError('IMAGE_GENERATION_UNAVAILABLE', 'رفض Gemini الصورة.')
         },
+      },
+      alternateImage: async () => {
+        throw new MissingProviderError('IMAGE_GENERATION_UNAVAILABLE', 'تعذر المزوّد البديل.')
       },
       payload: payload(),
     })
