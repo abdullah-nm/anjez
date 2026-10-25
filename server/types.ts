@@ -1,4 +1,4 @@
-export type Role = 'admin' | 'member'
+export type Role = 'admin' | 'member' | 'provider'
 
 export type DocumentStatus =
   | 'pending'

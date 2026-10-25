@@ -4,7 +4,8 @@ import express from 'express'
 import multer from 'multer'
 import { z } from 'zod'
 import { mkdirSync } from 'node:fs'
-import { SESSION_COOKIE, loginUser, registerCompany, requireRole, userFromRequest } from './auth.ts'
+import { SESSION_COOKIE, loginUser, registerCompany, registerProvider, requireRole, userFromRequest } from './auth.ts'
+import { parseProvider, registerFulfillmentRoutes } from './platform/fulfillment.ts'
 import { readOriginal, removeOriginal, saveOriginal } from './lib/files.ts'
 import type { AppConfig } from './config.ts'
 import { providerStatus } from './config.ts'
@@ -139,10 +140,15 @@ export function createApp(deps: Deps) {
     storage: deps.storage,
     llm: deps.llm,
     images,
-    requireUser,
+    requireUser: requireCompanyUser,
     store: deps.store,
     metrics: generations,
     activeGenerations,
+  })
+  registerFulfillmentRoutes(app, {
+    platform: deps.platform,
+    store: deps.store,
+    requireUser,
   })
 
   app.get('/api/health', (_req, res) => {
@@ -172,6 +178,44 @@ export function createApp(deps: Deps) {
         result: 'ok',
       })
       res.status(201).json({ user: publicUser(result.user), rag: providerStatus(deps.config) })
+    } catch (error) {
+      next(error)
+    }
+  })
+
+  app.post('/api/register/provider', async (req, res, next) => {
+    try {
+      if (req.body && typeof req.body === 'object' && 'role' in req.body) {
+        throw new AppError('إنشاء الحساب لا يمنح صلاحية الأدمن.', 400, 'ROLE_FORBIDDEN')
+      }
+      const body = z.object({
+        kind: z.enum(['shop', 'individual']),
+        displayName: z.string(),
+        city: z.string(),
+        phone: z.string(),
+        services: z.array(z.string()),
+        email: z.string(),
+        password: z.string(),
+        confirm: z.string(),
+      }).parse(req.body ?? {})
+      const profileInput = parseProvider(body)
+      const created = await registerProvider(deps.store, body, deps.config.sessionSecret, deps.config.sessionTtlMs)
+      try {
+        deps.platform.saveProvider({
+          userId: created.userId,
+          kind: profileInput.kind,
+          displayName: profileInput.displayName,
+          city: profileInput.city,
+          phone: profileInput.phone,
+          services: profileInput.services,
+          createdAt: new Date().toISOString(),
+        })
+      } catch (error) {
+        await deps.store.deleteUser(created.userId)
+        throw error
+      }
+      res.cookie(SESSION_COOKIE, created.session.token, sessionCookieOptions(deps.config.sessionTtlMs))
+      res.status(201).json({ user: publicUser(created.session.user), rag: providerStatus(deps.config) })
     } catch (error) {
       next(error)
     }
@@ -266,7 +310,7 @@ export function createApp(deps: Deps) {
       }
     }
     try {
-      const user = await requireUser(req)
+      const user = await requireCompanyUser(req)
       noteMetric(res, { feature: 'design.image' })
       const body = designImageSchema.parse(req.body ?? {})
       try {
@@ -380,7 +424,7 @@ export function createApp(deps: Deps) {
 
   app.get('/api/knowledge/documents', async (req, res, next) => {
     try {
-      const user = await requireUser(req)
+      const user = await requireCompanyUser(req)
       const documents = await deps.store.listDocuments(user.companyId)
       res.json({ documents })
     } catch (error) {
@@ -390,7 +434,7 @@ export function createApp(deps: Deps) {
 
   app.post('/api/knowledge/documents', upload.single('file'), async (req, res, next) => {
     try {
-      const user = await requireUser(req)
+      const user = await requireCompanyUser(req)
       requireRole(user, 'admin')
       noteMetric(res, { feature: 'knowledge.index' })
       const file = req.file
@@ -454,7 +498,7 @@ export function createApp(deps: Deps) {
 
   app.post('/api/knowledge/documents/:id/reindex', async (req, res, next) => {
     try {
-      const user = await requireUser(req)
+      const user = await requireCompanyUser(req)
       requireRole(user, 'admin')
       noteMetric(res, { feature: 'knowledge.index' })
       const documentId = routeParam(req.params.id)
@@ -503,7 +547,7 @@ export function createApp(deps: Deps) {
 
   app.delete('/api/knowledge/documents/:id', async (req, res, next) => {
     try {
-      const user = await requireUser(req)
+      const user = await requireCompanyUser(req)
       requireRole(user, 'admin')
       const documentId = routeParam(req.params.id)
       const deleted = await deps.store.softDeleteDocument(
@@ -530,7 +574,7 @@ export function createApp(deps: Deps) {
 
   app.post('/api/knowledge/ask', async (req, res, next) => {
     try {
-      const user = await requireUser(req)
+      const user = await requireCompanyUser(req)
       noteMetric(res, { feature: 'knowledge.ask' })
       const body = askSchema.parse(req.body ?? {})
 
@@ -642,7 +686,7 @@ export function createApp(deps: Deps) {
 
   app.get('/api/observability/summary', async (req, res, next) => {
     try {
-      const user = await requireUser(req)
+      const user = await requireCompanyUser(req)
       if (user.role !== 'admin') {
         throw new AppError('صلاحية غير كافية لعرض مراقبة النظام.', 403, 'FORBIDDEN')
       }
@@ -688,7 +732,7 @@ export function createApp(deps: Deps) {
 
   app.get('/api/observability/generations', async (req, res, next) => {
     try {
-      const user = await requireUser(req)
+      const user = await requireCompanyUser(req)
       if (user.role !== 'admin') {
         throw new AppError('صلاحية غير كافية لعرض مراقبة التوليد.', 403, 'FORBIDDEN')
       }
@@ -720,7 +764,7 @@ export function createApp(deps: Deps) {
 
   app.get('/api/observability/generations/:id/preview', async (req, res, next) => {
     try {
-      const user = await requireUser(req)
+      const user = await requireCompanyUser(req)
       if (user.role !== 'admin') {
         throw new AppError('صلاحية غير كافية لمعاينة نتيجة التوليد.', 403, 'FORBIDDEN')
       }
@@ -738,7 +782,7 @@ export function createApp(deps: Deps) {
 
   app.get('/api/observability/companies/:companyId', async (req, res, next) => {
     try {
-      const user = await requireUser(req)
+      const user = await requireCompanyUser(req)
       if (user.role !== 'admin') throw new AppError('صلاحية غير كافية لعرض شركات المنصة.', 403, 'FORBIDDEN')
       const companyId = companyParam(req.params.companyId)
       const companies = await deps.store.listPlatformCompanies()
@@ -811,7 +855,7 @@ export function createApp(deps: Deps) {
 
   app.get('/api/observability/dashboard', async (req, res, next) => {
     try {
-      const user = await requireUser(req)
+      const user = await requireCompanyUser(req)
       if (user.role !== 'admin') throw new AppError('صلاحية غير كافية لعرض لوحة المراقبة.', 403, 'FORBIDDEN')
       const presetRaw = typeof req.query.preset === 'string' ? req.query.preset : '7d'
       const fromRaw = typeof req.query.from === 'string' ? req.query.from : undefined
@@ -979,6 +1023,12 @@ export function createApp(deps: Deps) {
     const user = await userFromRequest(deps.store, req, deps.config.sessionSecret)
     if (!user) throw new AppError('يلزم تسجيل الدخول.', 401, 'UNAUTHENTICATED')
     attachMetricCompany(req, user.companyId)
+    return user
+  }
+
+  async function requireCompanyUser(req: express.Request): Promise<SessionUser> {
+    const user = await requireUser(req)
+    if (user.role === 'provider') throw new AppError('هذا المسار خاص بحساب الشركة.', 403, 'FORBIDDEN')
     return user
   }
 

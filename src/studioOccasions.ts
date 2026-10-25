@@ -6,6 +6,7 @@ export type StudioOccasion = {
   category?: string | null
   audience?: string
   dateOfficial?: boolean
+  titleEn?: string
 }
 
 type CompanyInput = {
@@ -24,6 +25,7 @@ type SystemInput = {
   key?: string
   title?: string
   titleAr?: string
+  titleEn?: string
   date?: string | null
   category?: string | null
   dateCertainty?: string
@@ -100,5 +102,6 @@ function systemRow(event: SystemInput, today: string): StudioOccasion | null {
     category: event.category ?? null,
     audience: '',
     dateOfficial: event.dateCertainty === 'official',
+    titleEn: event.titleEn?.trim() || undefined,
   }
 }

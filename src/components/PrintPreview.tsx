@@ -1,4 +1,5 @@
 import type { CompanyBrand, DesignDraft, PrintProduct } from '../types'
+import { useI18n } from '../i18n'
 
 function channel(hex: string, index: number) {
   return Number.parseInt(hex.slice(1 + index * 2, 3 + index * 2), 16)
@@ -30,9 +31,11 @@ export function PrintPreview({
   product: PrintProduct
   draft: DesignDraft
 }) {
+  const { t, productLabel } = useI18n()
   const logoSrc = brand.logoUrl || undefined
+  const productName = productLabel(product.id, product.name)
   if (draft.generatedImageDataUrl?.startsWith('data:image/svg')) {
-    return <img className="preview-file" src={draft.generatedImageDataUrl} alt={`معاينة ${product.name}`} />
+    return <img className="preview-file" src={draft.generatedImageDataUrl} alt={t('previewAlt')} />
   }
 
   const primary = /^#[0-9a-fA-F]{6}$/.test(brand.primaryColor) ? brand.primaryColor : '#1e3a5f'
@@ -40,7 +43,7 @@ export function PrintPreview({
   const deep = darken(primary, 0.38)
   const footer = darken(primary, 0.5)
   const ink = readable(primary)
-  const subtitle = draft.subhead.trim() || draft.body.trim() || 'تصميم للطباعة'
+  const subtitle = draft.subhead.trim() || draft.body.trim() || t('designForPrint')
 
   return (
     <div
@@ -63,13 +66,13 @@ export function PrintPreview({
         <img
           className="preview-logo"
           src={logoSrc}
-          alt={`شعار ${brand.companyName}`}
+          alt={t('logoOf', { name: brand.companyName })}
           onError={(event) => {
             event.currentTarget.style.display = 'none'
           }}
         />
       )}
-      <span className="preview-pill" style={{ background: accent, color: readable(accent) }}>{product.name}</span>
+      <span className="preview-pill" style={{ background: accent, color: readable(accent) }}>{productName}</span>
       {draft.headline && (
         <h3 style={{ fontSize: draft.headline.length > 32 ? '1.05rem' : undefined }}>{draft.headline}</h3>
       )}
@@ -77,7 +80,7 @@ export function PrintPreview({
       <span className="preview-rule" style={{ background: accent }} />
       <footer className="preview-foot" style={{ background: footer, color: readable(footer) }}>
         <span>{brand.companyName}</span>
-        {draft.size && <span>المقاس: {draft.size}</span>}
+        {draft.size && <span>{t('sizeLine', { size: draft.size })}</span>}
       </footer>
     </div>
   )

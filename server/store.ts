@@ -48,6 +48,13 @@ export interface KnowledgeStore {
     name: string
     passwordHash: string
   }): Promise<void>
+  createProviderAccount(input: {
+    userId: string
+    email: string
+    name: string
+    passwordHash: string
+  }): Promise<void>
+  deleteUser(userId: string): Promise<void>
   upsertCompany(id: string, name: string): Promise<void>
   renameCompany(companyId: string, name: string): Promise<void>
   updateUserName(userId: string, name: string): Promise<void>
@@ -250,6 +257,33 @@ export class SqliteStore implements KnowledgeStore {
     if (!userColumns.has('session_epoch')) {
       this.db.exec('ALTER TABLE users ADD COLUMN session_epoch INTEGER NOT NULL DEFAULT 0')
     }
+    this.migrateNullableCompany()
+  }
+
+  private migrateNullableCompany() {
+    const columns = this.db.prepare('PRAGMA table_info(users)').all() as { name: string, notnull: number }[]
+    const company = columns.find((column) => column.name === 'company_id')
+    if (!company || company.notnull === 0) return
+    this.db.exec(`
+      PRAGMA foreign_keys = OFF;
+      CREATE TABLE users_next (
+        id TEXT PRIMARY KEY,
+        company_id TEXT,
+        email TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL,
+        role TEXT NOT NULL,
+        password_hash TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        session_epoch INTEGER NOT NULL DEFAULT 0,
+        FOREIGN KEY (company_id) REFERENCES companies(id)
+      );
+      INSERT INTO users_next (id, company_id, email, name, role, password_hash, created_at, session_epoch)
+      SELECT id, company_id, email, name, role, password_hash, created_at, session_epoch FROM users;
+      DROP TABLE users;
+      ALTER TABLE users_next RENAME TO users;
+      CREATE INDEX IF NOT EXISTS idx_users_company ON users(company_id);
+      PRAGMA foreign_keys = ON;
+    `)
   }
 
   private keepCompanyAccounts() {
@@ -267,8 +301,8 @@ export class SqliteStore implements KnowledgeStore {
 
   async getUserByEmail(email: string) {
     const row = this.db.prepare(
-      `SELECT u.id, u.company_id, u.email, u.name, u.role, u.password_hash, c.name AS company_name
-       FROM users u JOIN companies c ON c.id = u.company_id
+      `SELECT u.id, u.company_id, u.email, u.name, u.role, u.password_hash, COALESCE(c.name, '') AS company_name
+       FROM users u LEFT JOIN companies c ON c.id = u.company_id
        WHERE lower(u.email) = lower(?)`,
     ).get(email) as
       | {
@@ -286,8 +320,8 @@ export class SqliteStore implements KnowledgeStore {
       id: row.id,
       email: row.email,
       name: row.name,
-      companyId: row.company_id,
-      companyName: row.company_name,
+      companyId: row.company_id ?? '',
+      companyName: row.company_name ?? '',
       role: row.role,
       passwordHash: row.password_hash,
     }
@@ -295,8 +329,8 @@ export class SqliteStore implements KnowledgeStore {
 
   async getUserById(id: string): Promise<SessionUser | null> {
     const row = this.db.prepare(
-      `SELECT u.id, u.company_id, u.email, u.name, u.role, c.name AS company_name
-       FROM users u JOIN companies c ON c.id = u.company_id
+      `SELECT u.id, u.company_id, u.email, u.name, u.role, COALESCE(c.name, '') AS company_name
+       FROM users u LEFT JOIN companies c ON c.id = u.company_id
        WHERE u.id = ?`,
     ).get(id) as
       | {
@@ -313,8 +347,8 @@ export class SqliteStore implements KnowledgeStore {
       id: row.id,
       email: row.email,
       name: row.name,
-      companyId: row.company_id,
-      companyName: row.company_name,
+      companyId: row.company_id ?? '',
+      companyName: row.company_name ?? '',
       role: row.role,
     }
   }
@@ -375,6 +409,25 @@ export class SqliteStore implements KnowledgeStore {
       }
       throw error
     }
+  }
+
+  async createProviderAccount(input: {
+    userId: string
+    email: string
+    name: string
+    passwordHash: string
+  }) {
+    const email = input.email.trim().toLowerCase()
+    const existing = this.db.prepare('SELECT id FROM users WHERE lower(email) = lower(?)').get(email) as { id: string } | undefined
+    if (existing) throw new AppError('هذا البريد مسجّل بالفعل. سجّل الدخول بدل إنشاء حساب جديد.', 409, 'EMAIL_TAKEN')
+    this.db.prepare(
+      `INSERT INTO users (id, company_id, email, name, role, password_hash, created_at)
+       VALUES (?, NULL, ?, ?, 'provider', ?, ?)`,
+    ).run(input.userId, email, input.name, input.passwordHash, new Date().toISOString())
+  }
+
+  async deleteUser(userId: string) {
+    this.db.prepare(`DELETE FROM users WHERE id = ?`).run(userId)
   }
 
   async upsertCompany(id: string, name: string) {
@@ -774,8 +827,8 @@ class PostgresStore implements KnowledgeStore {
 
   async getUserByEmail(email: string) {
     const { rows } = await this.pool.query(
-      `SELECT u.id, u.company_id, u.email, u.name, u.role, u.password_hash, c.name AS company_name
-       FROM users u JOIN companies c ON c.id = u.company_id
+      `SELECT u.id, u.company_id, u.email, u.name, u.role, u.password_hash, COALESCE(c.name, '') AS company_name
+       FROM users u LEFT JOIN companies c ON c.id = u.company_id
        WHERE lower(u.email) = lower($1)`,
       [email],
     )
@@ -786,8 +839,8 @@ class PostgresStore implements KnowledgeStore {
 
   async getUserById(id: string) {
     const { rows } = await this.pool.query(
-      `SELECT u.id, u.company_id, u.email, u.name, u.role, c.name AS company_name
-       FROM users u JOIN companies c ON c.id = u.company_id
+      `SELECT u.id, u.company_id, u.email, u.name, u.role, COALESCE(c.name, '') AS company_name
+       FROM users u LEFT JOIN companies c ON c.id = u.company_id
        WHERE u.id = $1`,
       [id],
     )
@@ -850,6 +903,30 @@ class PostgresStore implements KnowledgeStore {
     } finally {
       client.release()
     }
+  }
+
+  async createProviderAccount(input: {
+    userId: string
+    email: string
+    name: string
+    passwordHash: string
+  }) {
+    const email = input.email.trim().toLowerCase()
+    try {
+      await this.pool.query(
+        `INSERT INTO users (id, company_id, email, name, role, password_hash) VALUES ($1, NULL, $2, $3, 'provider', $4)`,
+        [input.userId, email, input.name, input.passwordHash],
+      )
+    } catch (error) {
+      if (typeof error === 'object' && error && 'code' in error && (error as { code?: string }).code === '23505') {
+        throw new AppError('هذا البريد مسجّل بالفعل. سجّل الدخول بدل إنشاء حساب جديد.', 409, 'EMAIL_TAKEN')
+      }
+      throw error
+    }
+  }
+
+  async deleteUser(userId: string) {
+    await this.pool.query('DELETE FROM users WHERE id = $1', [userId])
   }
 
   async upsertCompany(id: string, name: string) {
@@ -1233,8 +1310,8 @@ function mapUser(row: {
     id: row.id,
     email: row.email,
     name: row.name,
-    companyId: row.company_id,
-    companyName: row.company_name,
+    companyId: row.company_id ?? '',
+    companyName: row.company_name ?? '',
     role: row.role,
     passwordHash: row.password_hash,
   }

@@ -1,6 +1,8 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { Link, Navigate, useLocation, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../auth'
+import { DateField } from '../components/DateField'
+import { useI18n, type MessageKey } from '../i18n'
 type Certainty = 'official' | 'estimated' | 'unannounced'
 
 type EventRow = {
@@ -54,20 +56,26 @@ const emptyForm = {
   reminderDays: [...reminderChoices] as number[],
 }
 
-const categoryLabel: Record<string, string> = {
-  national: 'وطني',
-  islamic: 'إسلامي',
-  season: 'موسم/فعالية',
-  custom: 'مخصص',
-  conference: 'مؤتمر',
-  launch: 'إطلاق',
-  internal: 'داخلي',
+const categoryKey: Record<string, MessageKey> = {
+  national: 'catNational',
+  islamic: 'catIslamic',
+  season: 'catSeason',
+  custom: 'catCustom',
+  conference: 'catConference',
+  launch: 'catLaunch',
+  internal: 'catInternal',
 }
 
-const certaintyLabel: Record<Certainty, string> = {
-  official: 'مؤكد',
-  estimated: 'تقديري',
-  unannounced: 'بانتظار الإعلان',
+const certaintyKey: Record<Certainty, MessageKey> = {
+  official: 'official',
+  estimated: 'estimated',
+  unannounced: 'unannounced',
+}
+
+const noteKey: Record<string, MessageKey> = {
+  national: 'noteFixed',
+  islamic: 'noteHijri',
+  season: 'noteSeason',
 }
 
 function riyadhParts(date = new Date()) {
@@ -85,20 +93,16 @@ function pad(value: number) {
   return String(value).padStart(2, '0')
 }
 
-function riyadhStamp(iso: string | null) {
-  if (!iso) return 'لم يُتحقق بعد'
-  return new Date(iso).toLocaleString('ar-SA', { timeZone: 'Asia/Riyadh', dateStyle: 'medium', timeStyle: 'short' })
-}
-
 export function CalendarPage() {
   const { user, loading } = useAuth()
+  const { t, formatDateTime, errorText, monthTitle, weekdayLabels, monthNames, occasionLabel } = useI18n()
   const location = useLocation()
   const [params] = useSearchParams()
   const today = riyadhParts()
   const [events, setEvents] = useState<EventRow[]>([])
   const [systemOccasions, setSystemOccasions] = useState<SystemOccasion[]>([])
   const [sync, setSync] = useState<SyncState | null>(null)
-  const [view, setView] = useState<'month' | 'week' | 'list'>('month')
+  const [view, setView] = useState<'month' | 'week' | 'year' | 'list'>('month')
   const [form, setForm] = useState(emptyForm)
   const [editing, setEditing] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -119,7 +123,7 @@ export function CalendarPage() {
     setSync(body.calendarSync || null)
   }
 
-  if (loading) return <p>جارٍ التحميل…</p>
+  if (loading) return <p>{t('loading')}</p>
   if (!user) return <Navigate to="/login" replace state={{ from: location.pathname }} />
 
   const daysInMonth = new Date(year, month, 0).getDate()
@@ -149,7 +153,7 @@ export function CalendarPage() {
     })
     const body = await response.json()
     if (!response.ok) {
-      setError(body.error || 'تعذر حفظ المناسبة.')
+      setError(errorText(body.code, t('saveEventFailed')))
       return
     }
     setForm(emptyForm)
@@ -169,14 +173,14 @@ export function CalendarPage() {
     })
     const body = await response.json()
     if (!response.ok) {
-      setError(body.error || 'تعذر تحديث الموعد.')
+      setError(errorText(body.code, t('updateDateFailed')))
       return
     }
     await reload()
   }
 
   const weekStart = `${year}-${pad(month)}-${pad(today.month === month && today.year === year ? today.day : 1)}`
-  const weekEvents = [...dated, ...systemDated.map((item) => ({ id: item.id, title: item.titleAr, date: item.date, dateCertainty: item.dateCertainty }))].filter((event) => {
+  const weekEvents = [...dated, ...systemDated.map((item) => ({ id: item.id, title: occasionLabel(item.key, item.titleAr), date: item.date, dateCertainty: item.dateCertainty }))].filter((event) => {
     if (!event.date) return false
     const anchor = new Date(`${weekStart}T12:00:00+03:00`)
     const day = anchor.getUTCDay()
@@ -214,50 +218,53 @@ export function CalendarPage() {
   }
 
   const groups = [
-    { id: 'national', title: 'وطني' },
-    { id: 'islamic', title: 'إسلامي' },
-    { id: 'season', title: 'موسم/فعالية' },
+    { id: 'national', title: t('catNational') },
+    { id: 'islamic', title: t('catIslamic') },
+    { id: 'season', title: t('catSeason') },
   ] as const
+  const todayYmd = `${today.year}-${pad(today.month)}-${pad(today.day)}`
 
   return (
     <div className="stack">
       <div className="section-head">
         <div>
-          <p className="eyebrow">تقويم الشركة · Asia/Riyadh</p>
-          <h1>المناسبات والتذكير قبل الموعد</h1>
+          <p className="eyebrow">{t('calEyebrow')}</p>
+          <h1>{t('calendarTitle')}</h1>
         </div>
         <div className="hero-actions">
-          <button type="button" className={view === 'month' ? 'btn btn-primary' : 'btn btn-ghost'} onClick={() => setView('month')}>شهر</button>
-          <button type="button" className={view === 'week' ? 'btn btn-primary' : 'btn btn-ghost'} onClick={() => setView('week')}>أسبوع</button>
-          <button type="button" className={view === 'list' ? 'btn btn-primary' : 'btn btn-ghost'} onClick={() => setView('list')}>قائمة</button>
+          <button type="button" className="btn btn-ghost" onClick={() => { setYear(today.year); setMonth(today.month); setView('month') }}>{t('goToday')}</button>
+          <button type="button" className={view === 'week' ? 'btn btn-primary' : 'btn btn-ghost'} onClick={() => setView('week')}>{t('week')}</button>
+          <button type="button" className={view === 'month' ? 'btn btn-primary' : 'btn btn-ghost'} onClick={() => setView('month')}>{t('month')}</button>
+          <button type="button" className={view === 'year' ? 'btn btn-primary' : 'btn btn-ghost'} onClick={() => setView('year')}>{t('year')}</button>
+          <button type="button" className={view === 'list' ? 'btn btn-primary' : 'btn btn-ghost'} onClick={() => setView('list')}>{t('list')}</button>
         </div>
       </div>
-      <p className="muted">المناسبات العامة يظهرها النظام لكل الشركات. التذكير داخل التطبيق يُفحص عند إقلاع الخادم ثم كل ساعة ما دامت العملية تعمل، وفي يوم الاستحقاق بتوقيت الرياض. لا يُرسل بريد.</p>
+      <p className="muted">{t('calIntro')}</p>
       {sync?.status === 'stale' && (
         <p className="notice" role="status">
-          تأخر تحديث المواعيد الهجرية. يُعرض آخر موعد موثوق. {sync.message}
-          {sync.checkedAt ? ` آخر نجاح: ${riyadhStamp(sync.checkedAt)}.` : ''}
+          {t('hijriStale')} {sync.checkedAt ? t('lastSuccess', { time: formatDateTime(sync.checkedAt) }) : ''}
         </p>
       )}
 
       <div className="hero-actions">
-        <button type="button" className="btn btn-ghost" onClick={() => shiftMonth(-1)}>الشهر السابق</button>
-        <strong>{new Date(`${year}-${pad(month)}-01T12:00:00+03:00`).toLocaleDateString('ar-SA', { month: 'long', year: 'numeric', timeZone: 'Asia/Riyadh' })}</strong>
-        <button type="button" className="btn btn-ghost" onClick={() => shiftMonth(1)}>الشهر التالي</button>
+        <button type="button" className="btn btn-ghost" onClick={() => shiftMonth(-1)}>{t('previousMonth')}</button>
+        <strong>{monthTitle(year, month)}</strong>
+        <button type="button" className="btn btn-ghost" onClick={() => shiftMonth(1)}>{t('nextMonth')}</button>
       </div>
 
       {view === 'month' && (
-        <div className="cal-grid">
+        <div className="cal-grid" aria-label={t('weekdayLabel')}>
+          {weekdayLabels().map((name) => <div key={name} className="cal-head">{name}</div>)}
           {cells.map((day, index) => {
             const ymd = day > 0 ? `${year}-${pad(month)}-${pad(day)}` : ''
             const dayEvents = dated.filter((event) => event.date === ymd)
             const daySystem = systemDated.filter((item) => item.date === ymd)
             return (
-              <div key={index} className="cal-cell">
+              <div key={index} className={ymd === todayYmd ? 'cal-cell cal-today' : 'cal-cell'}>
                 {day > 0 && <strong>{day}</strong>}
                 {dayEvents.map(eventButton)}
                 {daySystem.map((item) => (
-                  <span key={item.id} className={`cal-event cal-system cal-${item.dateCertainty}`}>{item.titleAr}</span>
+                  <span key={item.id} className={`cal-event cal-system cal-${item.dateCertainty}`}>{occasionLabel(item.key, item.titleAr)}</span>
                 ))}
               </div>
             )
@@ -267,16 +274,24 @@ export function CalendarPage() {
 
       {view === 'week' && (
         <ul className="order-mini">
-          {weekEvents.length === 0 && <li>لا مناسبات مؤرخة في هذا الأسبوع.</li>}
+          {weekEvents.length === 0 && <li>{t('noWeekEvents')}</li>}
           {weekEvents.map((event) => (
-            <li key={event.id}>{event.date} · {event.title} · {certaintyLabel[event.dateCertainty]}</li>
+            <li key={event.id}>{event.date} · {event.title} · {t(certaintyKey[event.dateCertainty])}</li>
           ))}
         </ul>
       )}
 
+      {view === 'year' && (
+        <div className="grid-2">
+          {monthNames().map((name, index) => (
+            <button key={name} type="button" className={index + 1 === month ? 'btn btn-primary' : 'btn btn-ghost'} onClick={() => { setMonth(index + 1); setView('month') }}>{name} {year}</button>
+          ))}
+        </div>
+      )}
+
       {view === 'list' && (
         <div className="stack">
-          {dated.length === 0 && systemDated.length === 0 && undated.length === 0 && <p className="muted">لا مناسبات شركة مفتوحة. المناسبات العامة ظاهرة في قسم النظام.</p>}
+          {dated.length === 0 && systemDated.length === 0 && undated.length === 0 && <p className="muted">{t('noOpenEvents')}</p>}
           {dated.map((event) => (
             <EventCard key={event.id} event={event} onReload={reload} annual={annual} setAnnual={setAnnual} onAnnual={saveAnnual} />
           ))}
@@ -285,7 +300,7 @@ export function CalendarPage() {
 
       {undated.length > 0 && (
         <section className="stack">
-          <h2>بانتظار موعد معلن</h2>
+          <h2>{t('waitingDate')}</h2>
           {undated.map((event) => (
             <EventCard key={event.id} event={event} onReload={reload} annual={annual} setAnnual={setAnnual} onAnnual={saveAnnual} />
           ))}
@@ -294,11 +309,11 @@ export function CalendarPage() {
 
       {history.length > 0 && (
         <section className="stack">
-          <h2>سجل سابق</h2>
+          <h2>{t('pastLog')}</h2>
           {history.map((event) => (
             <article key={event.id} className="card rec-card">
               <div>
-                <p className="eyebrow">{event.date} · {certaintyLabel[event.dateCertainty]}</p>
+                <p className="eyebrow">{event.date} · {t(certaintyKey[event.dateCertainty])}</p>
                 <h3>{event.title}</h3>
                 <p className="muted">{event.dateNote}</p>
               </div>
@@ -308,27 +323,21 @@ export function CalendarPage() {
       )}
 
       <form className="card stack" onSubmit={save}>
-        <h2>{editing ? 'تعديل مناسبة' : 'مناسبة جديدة'}</h2>
+        <h2>{editing ? t('editEvent') : t('newEvent')}</h2>
         <div className="grid-2">
-          <label className="field"><span>العنوان</span><input required value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} /></label>
-          <label className="field"><span>التاريخ</span><input type="date" required value={form.date} onChange={(event) => setForm({ ...form, date: event.target.value })} /></label>
-          <label className="field"><span>الوقت (اختياري)</span><input type="time" value={form.time} onChange={(event) => setForm({ ...form, time: event.target.value })} /></label>
-          <label className="field"><span>التصنيف</span>
+          <label className="field"><span>{t('title')}</span><input required value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} /></label>
+          <label className="field"><span>{t('date')}</span><DateField required value={form.date} onChange={(date) => setForm({ ...form, date })} /></label>
+          <label className="field"><span>{t('timeOptional')}</span><input placeholder="14:30" value={form.time} onChange={(event) => setForm({ ...form, time: event.target.value })} /></label>
+          <label className="field"><span>{t('category')}</span>
             <select value={form.category} onChange={(event) => setForm({ ...form, category: event.target.value })}>
-              <option value="custom">مخصص</option>
-              <option value="national">وطني</option>
-              <option value="islamic">إسلامي</option>
-              <option value="season">موسم/فعالية</option>
-              <option value="conference">مؤتمر</option>
-              <option value="launch">إطلاق</option>
-              <option value="internal">داخلي</option>
+              {Object.entries(categoryKey).map(([value, key]) => <option key={value} value={value}>{t(key)}</option>)}
             </select>
           </label>
         </div>
-        <label className="field"><span>الجمهور</span><input value={form.audience} onChange={(event) => setForm({ ...form, audience: event.target.value })} /></label>
-        <label className="field"><span>الوصف</span><textarea rows={2} value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} /></label>
+        <label className="field"><span>{t('audience')}</span><input value={form.audience} onChange={(event) => setForm({ ...form, audience: event.target.value })} /></label>
+        <label className="field"><span>{t('description')}</span><textarea rows={2} value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} /></label>
         <fieldset className="field">
-          <legend>التذكير قبل الموعد. إلغاء كل الخيارات يوقف التذكير.</legend>
+          <legend>{t('reminderLegend')}</legend>
           <div className="tone-row">
             {reminderChoices.map((day) => (
               <label key={day} className="tone">
@@ -344,21 +353,21 @@ export function CalendarPage() {
                     })
                   }
                 />
-                {day} يوم
+                {t('reminderBefore', { days: day })}
               </label>
             ))}
           </div>
         </fieldset>
         <div className="hero-actions">
-          <button className="btn btn-primary" type="submit">حفظ</button>
-          {editing && <button type="button" className="btn btn-ghost" onClick={() => { setEditing(null); setForm(emptyForm) }}>إلغاء</button>}
+          <button className="btn btn-primary" type="submit">{t('save')}</button>
+          {editing && <button type="button" className="btn btn-ghost" onClick={() => { setEditing(null); setForm(emptyForm) }}>{t('cancel')}</button>}
         </div>
         {error && <p className="notice err">{error}</p>}
       </form>
 
       <section className="stack">
-        <h2>مناسبات النظام</h2>
-        <p className="muted">مناسبة عامة، منفصلة عن مناسبات الشركة. لا تُعدَّل من حساب الشركة.</p>
+        <h2>{t('systemOccasions')}</h2>
+        <p className="muted">{t('systemOccasionNote')}</p>
         {groups.map((group) => (
           <div key={group.id} className="stack">
             <h3>{group.title}</h3>
@@ -366,17 +375,17 @@ export function CalendarPage() {
               <article key={item.key} className={`card rec-card cal-system-card cal-cat-${item.category}`}>
                 <div>
                   <p className="eyebrow">
-                    <span className={`cal-badge cal-badge-${item.dateCertainty}`}>{certaintyLabel[item.dateCertainty]}</span>
-                    <span className="cal-badge">{categoryLabel[item.category]}</span>
-                    مناسبة عامة
+                    <span className={`cal-badge cal-badge-${item.dateCertainty}`}>{t(certaintyKey[item.dateCertainty])}</span>
+                    <span className="cal-badge">{t(categoryKey[item.category])}</span>
+                    {t('publicOccasion')}
                   </p>
-                  <h3>{item.titleAr}</h3>
-                  <p>{item.date || 'بانتظار الإعلان الرسمي'}</p>
-                  <p className="muted">المصدر: {item.source}</p>
-                  <p className="muted">آخر تحقق: {riyadhStamp(item.checkedAt)}{item.syncStatus === 'stale' ? ' · تأخر التحديث' : ''}</p>
-                  {item.dateNote && <p className="muted">{item.dateNote}</p>}
+                  <h3>{occasionLabel(item.key, item.titleAr)}</h3>
+                  <p>{item.date || t('awaitingOfficial')}</p>
+                  <p className="muted">{t('sourceLine', { source: item.source === 'umalqura' ? t('hijriSource') : item.source === 'fixed-gregorian' ? t('fixedSource') : item.source === 'admin-after-announcement' ? t('seasonSource') : item.source })}</p>
+                  <p className="muted">{t('lastCheckLine', { time: item.checkedAt ? formatDateTime(item.checkedAt) : t('notChecked') })}{item.syncStatus === 'stale' ? ` · ${t('staleSync')}` : ''}</p>
+                  <p className="muted">{t(noteKey[item.category] || 'noteSeason')}</p>
                   {item.history.length > 0 && (
-                    <p className="muted">سجل سابق: {item.history.map((entry) => entry.date || 'بلا تاريخ').join('، ')}</p>
+                    <p className="muted">{t('pastHistory')}: {item.history.map((entry) => entry.date || t('noDate')).join(' · ')}</p>
                   )}
                 </div>
               </article>
@@ -401,29 +410,28 @@ function EventCard({
   setAnnual: (value: Record<string, { date: string, certainty: 'official' | 'estimated' }>) => void
   onAnnual: (id: string) => Promise<void>
 }) {
+  const { t } = useI18n()
   const draft = annual[event.id] || { date: event.date || '', certainty: event.dateCertainty === 'estimated' ? 'estimated' as const : 'official' as const }
   return (
     <article className="card rec-card">
       <div>
         <p className="eyebrow">
-          <span className={`cal-badge cal-badge-${event.dateCertainty}`}>{certaintyLabel[event.dateCertainty]}</span>
-          <span className="cal-badge">{categoryLabel[event.category] || event.category}</span>
+          <span className={`cal-badge cal-badge-${event.dateCertainty}`}>{t(certaintyKey[event.dateCertainty])}</span>
+          <span className="cal-badge">{categoryKey[event.category] ? t(categoryKey[event.category]) : event.category}</span>
         </p>
         <h3>{event.title}</h3>
-        <p>{event.date || 'يُحدَّد لاحقًا'} {event.time || ''}</p>
+        <p>{event.date || t('dateLater')} {event.time || ''}</p>
         <p>{event.description}</p>
         {event.dateNote && <p className="muted">{event.dateNote}</p>}
-        <p className="muted">{event.reminderDays.length ? `تذكير قبل ${event.reminderDays.join('، ')} يوم` : 'التذكير متوقف'}</p>
+        <p className="muted">{event.reminderDays.length ? t('reminderBefore', { days: event.reminderDays.join(' · ') }) : t('reminderOff')}</p>
       </div>
       <div className="hero-actions">
-        <Link className="btn btn-primary" to={`/studio?eventId=${event.id}`}>ولّد تصاميم</Link>
+        <Link className="btn btn-primary" to={`/studio?eventId=${event.id}`}>{t('generateDesigns')}</Link>
         {!event.recurring && (
           <>
-            <input
-              type="date"
+            <DateField
               value={draft.date}
-              onChange={(input) => setAnnual({ ...annual, [event.id]: { ...draft, date: input.target.value } })}
-              aria-label={`موعد ${event.title}`}
+              onChange={(date) => setAnnual({ ...annual, [event.id]: { ...draft, date } })}
             />
             <select
               value={draft.certainty}
@@ -431,15 +439,15 @@ function EventCard({
                 ...annual,
                 [event.id]: { ...draft, certainty: input.target.value === 'estimated' ? 'estimated' : 'official' },
               })}
-              aria-label={`تأكيد موعد ${event.title}`}
+              aria-label={t('confirmDate', { title: event.title })}
             >
-              <option value="official">مؤكد رسمياً</option>
-              <option value="estimated">تقديري</option>
+              <option value="official">{t('officialFull')}</option>
+              <option value="estimated">{t('estimated')}</option>
             </select>
-            <button type="button" className="btn btn-secondary" onClick={() => void onAnnual(event.id)}>تحديث الموعد</button>
+            <button type="button" className="btn btn-secondary" onClick={() => void onAnnual(event.id)}>{t('updateDate')}</button>
           </>
         )}
-        <button type="button" className="btn btn-ghost" onClick={() => void fetch(`/api/events/${event.id}`, { method: 'DELETE', credentials: 'include' }).then(onReload)}>حذف</button>
+        <button type="button" className="btn btn-ghost" onClick={() => void fetch(`/api/events/${event.id}`, { method: 'DELETE', credentials: 'include' }).then(onReload)}>{t('delete')}</button>
       </div>
     </article>
   )
